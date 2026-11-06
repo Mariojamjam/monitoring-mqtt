@@ -1,0 +1,50 @@
+# Catalog of virtual device types.
+#
+# Workers assign types round-robin in this order: with 3 devices per worker there is one of
+# each type, and with 6 there are two of each. Every value is SYNTHETIC: these ranges are lab
+# parameters, not veterinary or clinical references.
+#
+# generator (kind: bounded_noise): value = center + uniform(-noise, +noise),
+# clipped to [minimum, maximum] and rounded to `decimals`.
+
+schema_version: 1
+
+device_types:
+  - name: dissolved_oxygen_probe
+    domain: aquaculture
+    metric: dissolved_oxygen
+    unit: mg/L
+    site_prefix: pond
+    generator:
+      kind: bounded_noise
+      center: 6.5
+      noise: 1.0
+      minimum: 3.0
+      maximum: 10.0
+      decimals: 2
+
+  - name: ammonia_detector
+    domain: poultry
+    metric: ammonia
+    unit: ppm
+    site_prefix: house
+    generator:
+      kind: bounded_noise
+      center: 12.0
+      noise: 4.0
+      minimum: 0.0
+      maximum: 50.0
+      decimals: 1
+
+  - name: rumen_ph_bolus
+    domain: cattle
+    metric: rumen_ph
+    unit: null # pH is dimensionless
+    site_prefix: herd
+    generator:
+      kind: bounded_noise
+      center: 6.3
+      noise: 0.3
+      minimum: 5.0
+      maximum: 7.2
+      decimals: 2
