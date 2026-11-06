@@ -1,0 +1,222 @@
+# Architecture
+
+Monitoring MQTT follows the **Publish/Subscribe** paradigm. Virtual devices publish
+telemetry to topics on a central MQTT broker. Subscribers declare their interest through
+topic filters, and the broker routes each message to every matching subscription.
+Publishers and subscribers never communicate directly.
+
+> This document describes what is currently implemented. It grows as components are added.
+
+## Components
+
+| Component | Status | Role |
+|---|---|---|
+| `monitoring-mqtt` CLI | Implemented | Operates the stack: diagnostics, topology-driven start/stop, status, logs, unit and smoke tests |
+| `broker` service | Implemented | MQTT broker (Eclipse Mosquitto 2.1); routes messages by topic. Named by its role, so the implementation could be swapped without touching clients |
+| `device-aquaculture`, `device-poultry`, `device-cattle` services | Implemented | Worker containers, one service per device type. Each runs a `SimulationWorker` hosting M virtual devices of that type, and each device has its own MQTT connection |
+| `monitor-aquaculture`, `monitor-poultry`, `monitor-cattle` services | Implemented | Generic monitor, one service per domain, subscribed to `monitoring/v1/{domain}/#`; N replicas from the topology |
+| `monitor-all` service | Implemented (0 replicas by default) | Same monitor code, subscribed to `monitoring/v1/#` |
+| `smoke` service (profile `tools`) | Implemented | One-off end-to-end check started by `monitoring-mqtt test smoke`; never part of `stack up` |
+
+## Configuration
+
+```text
+config/simulation.yaml ──┐   (experiment: versioned)
+config/devices.yaml ─────┼──► monitoring-mqtt stack up ──► variables ──► compose.yaml ──► containers
+.env ────────────────────┘   (machine: host port, smoke timeout; not versioned)
+```
+
+The CLI validates `config/simulation.yaml` against the device catalog before calling
+Docker. It generates one `run_id` per `stack up` (unless the file sets one) and passes
+every parameter to Compose as environment variables (`RUN_ID`, `MQTT_QOS`,
+`MQTT_CLEAN_SESSION`, `DEVICE_*_REPLICAS`, …), which are the interface between Compose and
+the processes. Services read only environment variables. Their built-in defaults equal the
+default experiment, so they also run outside Compose.
+
+Every `stack up` is a new run, so the worker containers are recreated with the new
+`run_id`, which also appears as the container label `monitoring-mqtt.run-id`. Monitors are
+recreated only when their own settings change.
+
+## Topology and scale model
+
+For each device type, `config/simulation.yaml` sets two numbers:
+
+```text
+N = worker containers of that type     (replicas)
+M = virtual devices in each container  (devices_per_worker)
+Devices of the type = N x M = publisher MQTT connections of that type
+```
+
+Example with oxygen at `{replicas: 2, devices_per_worker: 3}` and ammonia at
+`{replicas: 3, devices_per_worker: 1}`:
+
+```text
+device-aquaculture (container 185f5a)   device-aquaculture (container 47fc92)
+ ├─ aquaculture-185f5a-001 ●             ├─ aquaculture-47fc92-001 ●
+ ├─ aquaculture-185f5a-002 ●             ├─ aquaculture-47fc92-002 ●
+ └─ aquaculture-185f5a-003 ●             └─ aquaculture-47fc92-003 ●
+device-poultry (24dc88)   device-poultry (414db5)   device-poultry (bbab29)
+ └─ poultry-24dc88-001 ●   └─ poultry-414db5-001 ●   └─ poultry-bbab29-001 ●
+                                          ● = own MQTT client and connection
+```
+
+The default topology is 1 x 1 per type, one container per device. That option isolates
+best: each device has its own process and network address, and stopping a container
+removes exactly one device. Raising M packs many devices into one process. That costs much
+less memory per device, and the planned experiments compare both granularities.
+
+- **How the topology is applied.** Compose has one worker service per type, named
+  `device-{domain}`. Each service sets `DEVICE_TYPES`, and its `deploy.replicas` and
+  `DEVICES_PER_WORKER` come from the variables `DEVICE_{DOMAIN}_REPLICAS` and
+  `DEVICE_{DOMAIN}_DEVICES_PER_WORKER`. `monitoring-mqtt stack up` validates the topology
+  against the device catalog and passes these variables to Compose. Changing the topology
+  therefore never requires an image rebuild. Compose then adds or removes containers, and it
+  recreates a service's containers only when M changes.
+- **Identity.** Each device gets the identity `{domain}-{worker_id}-{index:03d}`, which is
+  also its MQTT `client_id`. `worker_id` derives from the container ID, so containers never
+  share identities. After starting, `stack up` checks that every service runs the expected
+  number of containers and that no two containers share a worker id. If either check
+  fails, it exits with an error.
+- **Scheduling.** A worker publishes from all its devices on a fixed-rate schedule, with
+  start times spread evenly over one interval to avoid bursts. Before the first publication
+  it waits, for at most 10 s, until its devices are connected.
+- **Failure granularity.** A device that fails only affects itself, because the worker
+  catches the error and keeps the other devices running. A worker container that fails
+  takes down all the devices it hosts.
+
+### Subscribers
+
+The `monitors` section of `config/simulation.yaml` sets the number of replicas of each
+monitor kind: one per catalog domain (`aquaculture`, `poultry`, `cattle`) plus `all`. The
+CLI passes them to Compose as `MONITOR_{KIND}_REPLICAS`. Each replica is a separate
+container with its own MQTT client id, `monitor-{kind}-{container short id}`.
+
+```text
+                         ┌──► monitor-poultry (replica 1)   copy 1
+ poultry-xxxx-001 ──► broker ──► monitor-poultry (replica 2)   copy 2
+   (one PUBLISH)         ├──► ...
+                         └──► monitor-poultry (replica 20)  copy 20
+                              monitor-aquaculture × 20      no copy (filter does not match)
+```
+
+MQTT 3.1.1 has no shared subscriptions, so N subscribers with the same filter receive N
+copies of each message (fan-out). Adding monitor replicas raises the broker's delivery work
+but does not spread the processing. This setup serves the planned experiment that measures
+the cost of fan-out. In a verified run with 20 aquaculture and 20 poultry monitors, the
+broker had 43 clients (3 devices and 40 monitors), and each ammonia event reached all 20
+poultry monitors and none of the aquaculture ones.
+
+## Data flow
+
+```text
+ device-* containers               broker                       monitor-* containers
+ ┌──────────────────────┐  PUBLISH  ┌─────────┐  matching   ┌──────────────────────────┐
+ │ VirtualDevice        │ ────────► │ broker  │ ──────────► │ Monitor                  │
+ │  generator → payload │   QoS 1   │ routes  │  messages   │  validate payload+topic  │
+ │  own MQTT client     │           │ by topic│             │  log, count invalid      │
+ └──────────────────────┘           └─────────┘             └──────────────────────────┘
+        monitoring/v1/aquaculture/dissolved_oxygen/{device_id}
+```
+
+1. A `VirtualDevice` asks its generator for a value and builds a `Measurement`.
+2. The device publishes the JSON payload on its own topic through its own client.
+3. The broker forwards the message to every subscription whose filter matches the topic.
+4. The monitor validates the payload against the schema and the topic, then logs it with
+   its observed latency.
+
+The publisher has no knowledge of any subscriber, and the monitor has no knowledge of any
+publisher. The topic and payload contract is described in [mqtt-contract.md](mqtt-contract.md).
+
+## Code structure
+
+| Package | Responsibility | May depend on |
+|---|---|---|
+| `monitoring_mqtt.core` | Contract (topics, payload model), configuration, logging, MQTT client factory | Third-party libraries only |
+| `monitoring_mqtt.simulator` | Device catalog, generators, identities, `VirtualDevice`, `SimulationWorker`, simulator entrypoint | `core` |
+| `monitoring_mqtt.consumers` | Subscribers (`monitor`) | `core` |
+| `monitoring_mqtt.testing` | Runtime checks against a running stack (`smoke`) | `core` |
+| `monitoring_mqtt.cli` | Operator commands that call `docker compose` and validate the topology | `core`, `simulator.catalog`. No other package imports `cli` |
+
+`core` never imports any other package of the project. The simulator never knows about
+consumers, and consumers never know about the simulator. They share only the contract in
+`core`.
+
+Each service is a module entrypoint that runs inside the shared application image:
+
+| Service | Command |
+|---|---|
+| `device-aquaculture`, `device-poultry`, `device-cattle` | `python -m monitoring_mqtt.simulator` (differ only by `DEVICE_TYPES`) |
+| `monitor-aquaculture`, `monitor-poultry`, `monitor-cattle`, `monitor-all` | `python -m monitoring_mqtt.consumers.monitor` (differ only by `MQTT_TOPIC_FILTER`) |
+| `smoke` | `python -m monitoring_mqtt.testing.smoke` (one-off, profile `tools`) |
+
+## Deployment view
+
+```text
+ Host
+ ├── monitoring-mqtt CLI ──(docker compose)──► Docker Engine
+ │
+ └── Docker Engine
+      └── Compose project "monitoring-mqtt"
+           └── network monitoring-mqtt_default
+                ├── broker               (Mosquitto, listens on 1883; 127.0.0.1:1883 on the host)
+                ├── device-<domain> × N  ──► broker:1883   (M connections each)
+                └── monitor-<kind> × N   ──► broker:1883   (1 connection each)
+```
+
+- **Fixed project name.** Every CLI invocation targets the Compose project `monitoring-mqtt`,
+  so different shells, and a development container that shares the host Docker daemon,
+  manage the same stack.
+- **Internal addressing.** Containers reach the broker as `broker:1883` on the Compose
+  network. Host access on the loopback interface is optional and intended for debugging.
+- **Self-contained images.** The broker image embeds its configuration. The application image
+  (`Dockerfile`) installs the package and its locked dependencies with `uv`, runs as a
+  non-root user, and is shared by every Python service. There are no bind mounts.
+- **Health.** The broker has a healthcheck that reads the retained `$SYS/broker/version`
+  topic. `stack up` waits for it to pass.
+
+## Smoke test
+
+`monitoring-mqtt test smoke` first checks that the broker container is running. It then
+starts the `smoke` service once (`docker compose run --rm --no-deps smoke`) on the Compose
+network, so the test never relies on host port mapping and runs the same way from the host
+or a Dev Container. The container performs these checks:
+
+1. **Broker.** Two independent clients, a publisher and a subscriber, connect to
+   `broker:1883`, and the subscriber subscribes to `monitoring/v1/#`.
+2. **Probe round trip.** The publisher sends a valid probe measurement with a known
+   `event_id` on `monitoring/v1/smoke/probe/smoke-<id>`. The check requires the broker's
+   `PUBACK` and the arrival of that same `event_id` at the subscriber before the timeout
+   (`SMOKE_TIMEOUT_SECONDS`, default 10 s). No monitor subscribes to the `smoke` domain, so
+   the probe never reaches the running monitors.
+3. **Live telemetry.** At least one valid measurement from the running devices must arrive
+   within a window derived from the experiment: twice the publish interval plus 5 s (15 s
+   by default). The window therefore grows with slow experiments and never gives a false
+   failure.
+
+The command exits with `0` only if every check passes, and with `1` otherwise. It also
+exits with `1`, without starting a container, when the stack is not running.
+
+## Failure behaviour
+
+| Event | Behaviour |
+|---|---|
+| Broker not ready at startup | Services wait for the broker healthcheck. Clients also keep retrying on their own |
+| Broker restart | Clients reconnect automatically (backoff 1–30 s). Monitors subscribe again on every connection because sessions are clean |
+| Broker unreachable while publishing | The measurement is dropped and logged as a warning. The `sequence` gap stays visible to consumers |
+| Subscriber stopped | Publishers are unaffected and keep publishing |
+| Invalid message | The monitor logs it with the reason, counts it and keeps running |
+| `SIGTERM` (`docker stop`) | Services disconnect cleanly and log summary counters |
+
+## The CLI is outside the data path
+
+The CLI only translates commands into `docker compose` invocations. It never runs a
+publisher or subscriber in its own process, and the stack keeps running after the CLI exits.
+
+## Security boundaries
+
+The broker accepts anonymous connections. This is acceptable only because the environment
+is a local, isolated lab and the port is bound to `127.0.0.1`. Any deployment beyond that
+requires authentication, TLS and ACLs.
+
+A single broker is a single point of failure. The current architecture makes no claims of
+high availability.
