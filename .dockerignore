@@ -1,0 +1,16 @@
+.git
+.venv
+.ai
+.claude
+CLAUDE.md
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.env
+results
+tests
+docs
+.devcontainer
+scripts
+.gitattributes

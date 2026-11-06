@@ -1,0 +1,152 @@
+# Monitoring MQTT stack.
+# The fixed project name lets the host and the Dev Container manage the same stack.
+name: monitoring-mqtt
+
+# Settings shared by every Python service built from the application image.
+x-app: &app
+  build:
+    context: .
+  image: monitoring-mqtt/app:local
+  restart: unless-stopped
+  depends_on:
+    # Startup convenience only: clients also reconnect if the broker restarts later.
+    broker:
+      condition: service_healthy
+
+# Experiment parameters come from config/simulation.yaml: `monitoring-mqtt stack up` passes
+# them as the variables below. The defaults match the default experiment, so a plain
+# `docker compose up` also works. Host and port are fixed by the stack (contract).
+x-mqtt-env: &mqtt-env
+  MQTT_HOST: broker
+  MQTT_PORT: "1883"
+  MQTT_QOS: ${MQTT_QOS:-1}
+  MQTT_KEEPALIVE: ${MQTT_KEEPALIVE:-30}
+  MQTT_CLEAN_SESSION: ${MQTT_CLEAN_SESSION:-true}
+  MQTT_RECONNECT_MIN_DELAY_SECONDS: ${MQTT_RECONNECT_MIN_DELAY_SECONDS:-1}
+  MQTT_RECONNECT_MAX_DELAY_SECONDS: ${MQTT_RECONNECT_MAX_DELAY_SECONDS:-30}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-simulation-env: &simulation-env
+  RUN_ID: ${RUN_ID:-}
+  PUBLISH_INTERVAL_SECONDS: ${PUBLISH_INTERVAL_SECONDS:-5}
+  SIMULATION_SEED: ${SIMULATION_SEED:-42}
+
+# Device workers: one service per device type, named device-{domain}.
+# Replicas (N) and devices per container (M) come from config/simulation.yaml, applied by
+# `monitoring-mqtt stack up` through the DEVICE_*_REPLICAS / DEVICE_*_DEVICES_PER_WORKER
+# variables. The defaults below (1 x 1) match the default topology.
+# No container_name, so services can have replicas. Never set WORKER_ID here: replicas
+# would share it and their MQTT client ids would collide.
+x-device-worker: &device-worker
+  <<: *app
+  command: ["python", "-m", "monitoring_mqtt.simulator"]
+  labels:
+    # The run this worker belongs to (one run id per `stack up`).
+    monitoring-mqtt.run-id: ${RUN_ID:-unset}
+
+x-monitor: &monitor
+  <<: *app
+  command: ["python", "-m", "monitoring_mqtt.consumers.monitor"]
+
+services:
+  # The MQTT broker. Services are named by role; the implementation (Eclipse Mosquitto)
+  # lives in the image and in infra/mosquitto/.
+  broker:
+    build:
+      context: infra/mosquitto
+    image: monitoring-mqtt/mosquitto:local
+    restart: unless-stopped
+    ports:
+      # Host access restricted to loopback; services use broker:1883 internally.
+      - "127.0.0.1:${MQTT_HOST_PORT:-1883}:1883"
+    healthcheck:
+      # Retained $SYS topics answer immediately once the broker accepts connections.
+      test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$$SYS/broker/version", "-C", "1", "-W", "3"]
+      # Each probe is logged as a connection, so probe often only while starting.
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
+
+  device-aquaculture:
+    <<: *device-worker
+    deploy:
+      replicas: ${DEVICE_AQUACULTURE_REPLICAS:-1}
+    environment:
+      <<: [*mqtt-env, *simulation-env]
+      DEVICE_TYPES: dissolved_oxygen_probe
+      DEVICES_PER_WORKER: ${DEVICE_AQUACULTURE_DEVICES_PER_WORKER:-1}
+
+  device-poultry:
+    <<: *device-worker
+    deploy:
+      replicas: ${DEVICE_POULTRY_REPLICAS:-1}
+    environment:
+      <<: [*mqtt-env, *simulation-env]
+      DEVICE_TYPES: ammonia_detector
+      DEVICES_PER_WORKER: ${DEVICE_POULTRY_DEVICES_PER_WORKER:-1}
+
+  device-cattle:
+    <<: *device-worker
+    deploy:
+      replicas: ${DEVICE_CATTLE_REPLICAS:-1}
+    environment:
+      <<: [*mqtt-env, *simulation-env]
+      DEVICE_TYPES: rumen_ph_bolus
+      DEVICES_PER_WORKER: ${DEVICE_CATTLE_DEVICES_PER_WORKER:-1}
+
+  # Monitors: one service per kind, named monitor-{domain} or monitor-all. Replicas come
+  # from the `monitors` section of config/simulation.yaml (MONITOR_*_REPLICAS); every
+  # replica is an independent subscriber with its own client id and receives its own copy
+  # of each matching message.
+  monitor-aquaculture:
+    <<: *monitor
+    deploy:
+      replicas: ${MONITOR_AQUACULTURE_REPLICAS:-1}
+    environment:
+      <<: *mqtt-env
+      MONITOR_NAME: aquaculture
+      MQTT_TOPIC_FILTER: monitoring/v1/aquaculture/#
+
+  monitor-poultry:
+    <<: *monitor
+    deploy:
+      replicas: ${MONITOR_POULTRY_REPLICAS:-1}
+    environment:
+      <<: *mqtt-env
+      MONITOR_NAME: poultry
+      MQTT_TOPIC_FILTER: monitoring/v1/poultry/#
+
+  monitor-cattle:
+    <<: *monitor
+    deploy:
+      replicas: ${MONITOR_CATTLE_REPLICAS:-1}
+    environment:
+      <<: *mqtt-env
+      MONITOR_NAME: cattle
+      MQTT_TOPIC_FILTER: monitoring/v1/cattle/#
+
+  monitor-all:
+    <<: *monitor
+    deploy:
+      replicas: ${MONITOR_ALL_REPLICAS:-0}
+    environment:
+      <<: *mqtt-env
+      MONITOR_NAME: all
+      MQTT_TOPIC_FILTER: monitoring/v1/#
+
+  # One-off end-to-end check, run by `monitoring-mqtt test smoke` (docker compose run).
+  # The `tools` profile keeps it out of `stack up`.
+  smoke:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    command: ["python", "-m", "monitoring_mqtt.testing.smoke"]
+    environment:
+      <<: *mqtt-env
+      # Probe clients use random ids; a persistent session would be left behind in the broker.
+      MQTT_CLEAN_SESSION: "true"
+      # Machine tolerance (.env); the telemetry window is derived from the experiment by the CLI.
+      SMOKE_TIMEOUT_SECONDS: ${SMOKE_TIMEOUT_SECONDS:-10}
+      SMOKE_TELEMETRY_WINDOW_SECONDS: ${SMOKE_TELEMETRY_WINDOW_SECONDS:-15}
