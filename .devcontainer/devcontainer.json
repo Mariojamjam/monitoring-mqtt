@@ -1,0 +1,37 @@
+{
+  "name": "Monitoring MQTT",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    // Docker CLI + Compose V2 talking to the host Docker daemon (no daemon inside).
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "DEVCONTAINER": "true",
+    // Keep the container's environment out of the bind-mounted checkout so it never
+    // overwrites the host's .venv (different OS and paths).
+    "UV_PROJECT_ENVIRONMENT": "/home/vscode/.venvs/monitoring-mqtt",
+    "UV_LINK_MODE": "copy",
+    "UV_PYTHON_DOWNLOADS": "never"
+  },
+  "remoteEnv": {
+    "PATH": "/home/vscode/.venvs/monitoring-mqtt/bin:${containerEnv:PATH}"
+  },
+  "mounts": [
+    // Reuse downloaded packages across container rebuilds.
+    "source=monitoring-mqtt-uv-cache,target=/home/vscode/.cache/uv,type=volume"
+  ],
+  // Installs the project (editable) and the locked dependencies, which provides the
+  // monitoring-mqtt command. Runs inside the container; nothing runs on the host.
+  "postCreateCommand": "uv sync --frozen && monitoring-mqtt version",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "charliermarsh.ruff"],
+      "settings": {
+        "python.defaultInterpreterPath": "/home/vscode/.venvs/monitoring-mqtt/bin/python"
+      }
+    }
+  }
+}
