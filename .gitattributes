@@ -1,0 +1,5 @@
+# Keep LF line endings on every OS: configs and files copied into Linux images
+# must not get CRLF from a Windows checkout.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
