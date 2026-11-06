@@ -7,9 +7,10 @@ Runs inside the Compose network (``monitoring-mqtt test smoke``) and checks two 
    the broker within the timeout. No monitor subscribes to the ``smoke`` domain, so the
    probe does not disturb the running stack.
 2. Live telemetry: at least one valid measurement from the running devices must arrive
-   within the telemetry window.
+   within the telemetry window. With ``SMOKE_REQUIRE_TELEMETRY=false`` (a machine that runs
+   no devices; they may run elsewhere) the result is reported but does not fail the test.
 
-Exit code 0 when both pass, 1 otherwise, 2 on invalid configuration.
+Exit code 0 when the required checks pass, 1 otherwise, 2 on invalid configuration.
 """
 
 from __future__ import annotations
@@ -28,14 +29,14 @@ from monitoring_mqtt.core import mqtt as mqtt_helpers
 from monitoring_mqtt.core.config import (
     ConfigError,
     MqttSettings,
+    env_bool,
     env_float,
     log_level_from_env,
 )
 from monitoring_mqtt.core.logging import configure_logging
 from monitoring_mqtt.core.models import Measurement, TopicMismatchError
-from monitoring_mqtt.core.topics import ALL_TELEMETRY_FILTER, InvalidTopicError
+from monitoring_mqtt.core.topics import ALL_TELEMETRY_FILTER, SMOKE_DOMAIN, InvalidTopicError
 
-SMOKE_DOMAIN = "smoke"
 SMOKE_METRIC = "probe"
 
 logger = logging.getLogger("monitoring_mqtt.smoke")
@@ -93,15 +94,18 @@ class Check:
     name: str
     passed: bool
     detail: str
+    required: bool = True
 
 
 def report(checks: list[Check]) -> int:
     for check in checks:
         if check.passed:
             logger.info("[ok] %s: %s", check.name, check.detail)
-        else:
+        elif check.required:
             logger.error("[FAIL] %s: %s", check.name, check.detail)
-    passed = all(check.passed for check in checks)
+        else:
+            logger.warning("[warn] %s: %s (not required here)", check.name, check.detail)
+    passed = all(check.passed for check in checks if check.required)
     (logger.info if passed else logger.error)("SMOKE TEST %s", "PASSED" if passed else "FAILED")
     return 0 if passed else 1
 
@@ -110,7 +114,12 @@ def _wait(event: threading.Event, deadline: float) -> bool:
     return event.wait(max(0.0, deadline - time.monotonic()))
 
 
-def run_smoke(settings: MqttSettings, timeout: float, telemetry_window: float) -> int:
+def run_smoke(
+    settings: MqttSettings,
+    timeout: float,
+    telemetry_window: float,
+    require_telemetry: bool = True,
+) -> int:
     suffix = uuid.uuid4().hex[:8]
     probe = build_probe(suffix)
     observation = Observation(probe.event_id)
@@ -179,7 +188,8 @@ def run_smoke(settings: MqttSettings, timeout: float, telemetry_window: float) -
                 f"{','.join(sorted(observation.domains)) or '-'}, "
                 f"invalid={observation.invalid_messages}"
                 if telemetry
-                else f"no device telemetry within {telemetry_window}s (is the stack up?)",
+                else f"no device telemetry within {telemetry_window}s (are devices running?)",
+                required=require_telemetry,
             )
         )
         return report(checks)
@@ -194,11 +204,12 @@ def main() -> int:
         settings = MqttSettings.from_env()
         timeout = env_float(os.environ, "SMOKE_TIMEOUT_SECONDS", 10.0, minimum=1.0)
         window = env_float(os.environ, "SMOKE_TELEMETRY_WINDOW_SECONDS", 15.0, minimum=1.0)
+        require_telemetry = env_bool(os.environ, "SMOKE_REQUIRE_TELEMETRY", True)
     except ConfigError as exc:
         logging.basicConfig()
         logger.error("invalid configuration: %s", exc)
         return 2
-    return run_smoke(settings, timeout, max(window, timeout))
+    return run_smoke(settings, timeout, max(window, timeout), require_telemetry)
 
 
 if __name__ == "__main__":

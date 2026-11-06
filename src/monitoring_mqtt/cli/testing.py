@@ -9,11 +9,17 @@ import typer
 from rich.console import Console
 
 from monitoring_mqtt.cli import compose
+from monitoring_mqtt.cli.machine import DEVICES
 from monitoring_mqtt.cli.project import ProjectNotFoundError, resolve_project_root
-from monitoring_mqtt.cli.simulation import SimulationError, load_simulation, smoke_env
+from monitoring_mqtt.cli.simulation import smoke_env
+from monitoring_mqtt.cli.stack import (
+    ConfigOption,
+    broker_env,
+    load_machine_or_exit,
+    load_simulation_or_exit,
+)
 
 SMOKE_SERVICE = "smoke"
-BROKER_SERVICE = "broker"
 UNIT_TESTS = "tests/unit"
 
 app = typer.Typer(help="Run automated tests.", no_args_is_help=True)
@@ -52,28 +58,22 @@ def unit(ctx: typer.Context) -> None:
     raise typer.Exit(code=code)
 
 
-def broker_running(root: Path) -> bool:
-    result = compose.capture(root, "ps", "--status", "running", "--quiet", BROKER_SERVICE)
-    return result.returncode == 0 and bool(result.stdout.strip())
-
-
 @app.command()
-def smoke(ctx: typer.Context) -> None:
-    """Check the running stack end to end from inside the Compose network."""
+def smoke(ctx: typer.Context, config: ConfigOption = None) -> None:
+    """Check the broker this machine uses end to end, from a container.
+
+    Live telemetry is required only when this machine runs devices.
+    """
     root = _project_root(ctx)
+    machine = load_machine_or_exit(root)
+    # Same MQTT settings as the experiment; the telemetry window follows its interval.
+    sim = load_simulation_or_exit(root, config)
     try:
-        # Same MQTT settings as the experiment; the telemetry window follows its interval.
-        env = smoke_env(load_simulation(root))
-    except SimulationError as exc:
-        err_console.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(code=2) from exc
-    try:
-        if not broker_running(root):
-            err_console.print(
-                "[red]error:[/red] the stack is not running. "
-                "Start it with 'monitoring-mqtt stack up' first."
-            )
-            raise typer.Exit(code=1)
+        env = {
+            **smoke_env(sim),
+            **broker_env(root, machine),
+            "SMOKE_REQUIRE_TELEMETRY": "true" if machine.runs(DEVICES) else "false",
+        }
         code = compose.run(root, "run", "--rm", "--no-deps", SMOKE_SERVICE, env=env)
     except compose.ComposeError as exc:
         err_console.print(f"[red]error:[/red] {exc}")

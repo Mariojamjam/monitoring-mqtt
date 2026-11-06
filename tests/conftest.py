@@ -38,6 +38,23 @@ device_types:
 """
 
 
+MACHINE_VARIABLES = (
+    "STACK_ROLES",
+    "MQTT_BROKER_HOST",
+    "MQTT_BROKER_PORT",
+    "MQTT_BIND_ADDRESS",
+    "MQTT_HOST_PORT",
+    "NODE_NAME",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_machine_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests must not depend on the developer's own machine settings."""
+    for name in MACHINE_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def catalog() -> DeviceCatalog:
     return DeviceCatalog.model_validate(yaml.safe_load(CATALOG_YAML))

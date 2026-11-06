@@ -36,3 +36,8 @@ def test_observation_counts_live_telemetry_and_invalid_messages(measurement) -> 
 def test_report_exit_codes() -> None:
     assert report([Check("a", True, ""), Check("b", True, "")]) == 0
     assert report([Check("a", True, ""), Check("b", False, "")]) == 1
+
+
+def test_report_ignores_failed_optional_checks() -> None:
+    assert report([Check("probe", True, ""), Check("telemetry", False, "", required=False)]) == 0
+    assert report([Check("probe", False, ""), Check("telemetry", True, "", required=False)]) == 1

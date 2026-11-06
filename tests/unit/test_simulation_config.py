@@ -177,7 +177,7 @@ def test_run_id_generated_once_when_null() -> None:
     sim = load_simulation(REPO)
     assert sim.run.run_id is None
     now = datetime(2026, 11, 6, 3, 4, 5, tzinfo=UTC)
-    assert resolve_run_id(sim, now) == "run-20261106T030405Z"
+    assert resolve_run_id(sim, now=now) == "run-20261106T030405Z"
 
 
 def test_smoke_window_follows_publish_interval(tmp_path: Path) -> None:
