@@ -1,0 +1,67 @@
+# Experiment configuration. Everything that defines an experiment lives here, so runs are
+# reproducible from versioned files. `monitoring-mqtt stack up` validates this file and
+# applies it; edit it and run `stack up` again (no image rebuild needed). Every `stack up`
+# starts a new run. Machine-specific settings (host port, smoke timeout) go in `.env`.
+#
+# run       run_id: null generates one id per `stack up`, shared by every worker
+#           (set a value to reuse it); seed makes generated values reproducible;
+#           log_level: DEBUG | INFO | WARNING | ERROR (use WARNING for high-volume runs)
+# mqtt      qos 0 | 1 | 2; keepalive_seconds (failure detection); clean_session: false keeps
+#           subscriptions and queues QoS 1 messages for disconnected clients (the session
+#           survives `docker stop`/`start`, not container recreation); reconnect backoff
+# devices   publish_interval_seconds for every device
+#
+# workers   per device type (names from config/devices.yaml):
+#   replicas            N: worker containers for this type
+#   devices_per_worker  M: virtual devices inside each container (each with its own
+#                          MQTT connection and client id)
+#   Devices of a type = N x M. Default: one container per device (most realistic isolation).
+#   For scale experiments, aggregate devices, e.g.
+#     dissolved_oxygen_probe: {replicas: 5, devices_per_worker: 10}   # 50 probes
+#
+# monitors  per monitor kind, one container per replica
+#   aquaculture | poultry | cattle   subscribe to monitoring/v1/<domain>/#
+#   all                              subscribes to monitoring/v1/# (every domain)
+#   Every replica is an independent subscriber: the broker delivers its own copy of each
+#   matching message to each one (fan-out), it does not split the load between them.
+#
+# Omitted entries, or replicas: 0, do not run. Omitted sections use the defaults shown below.
+
+schema_version: 1
+
+run:
+  run_id: null
+  seed: 42
+  log_level: INFO
+
+mqtt:
+  qos: 1
+  keepalive_seconds: 30
+  clean_session: true
+  reconnect:
+    min_delay_seconds: 1
+    max_delay_seconds: 30
+
+devices:
+  publish_interval_seconds: 5
+
+workers:
+  dissolved_oxygen_probe:
+    replicas: 1
+    devices_per_worker: 1
+  ammonia_detector:
+    replicas: 1
+    devices_per_worker: 1
+  rumen_ph_bolus:
+    replicas: 1
+    devices_per_worker: 1
+
+monitors:
+  aquaculture:
+    replicas: 1
+  poultry:
+    replicas: 1
+  cattle:
+    replicas: 1
+  all:
+    replicas: 0
