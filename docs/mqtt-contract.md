@@ -37,6 +37,9 @@ monitoring/v1/aquaculture/dissolved_oxygen/aquaculture-3f9a1c-001
   persistent identities for experiments. Otherwise it is the first 6 characters of the
   container hostname. Docker sets the hostname to the container ID, which differs between
   replicas.
+- Before creating its devices, every worker claims its `worker_id` in the
+  [worker registry](#worker-registry). If another worker, possibly on another machine,
+  already holds that id, the worker switches to a random 6-character hexadecimal id.
 - `index` is the device position inside its worker, starting at `001`.
 
 ### Device types
@@ -162,10 +165,134 @@ The smoke test always uses a clean session, whatever the experiment sets.
   the session expires after one hour of disconnection. The client receives the queued
   messages when it reconnects with the same client id. QoS 0 messages are not queued.
 
+## Worker registry
+
+Workers coordinate their ids through retained messages on the broker. The broker only
+stores and routes them; the workers make every decision.
+
+```text
+monitoring/registry/v1/workers/{worker_id}
+```
+
+The registry lives outside `monitoring/v1/#`, so telemetry subscribers, including
+`monitor-all`, never receive it. Claims always use QoS 1 and `retain=true`, whatever the
+experiment uses for telemetry.
+
+Claim payload (UTF-8 JSON):
+
+```json
+{
+  "schema_version": 1,
+  "worker_id": "3f9a1c",
+  "instance_id": "6f1c2a8e-8a3d-4c55-9c1e-2b7b8f1d2a10",
+  "hostname": "3f9a1c0d2e4b",
+  "node": "pc-lab-1",
+  "run_id": "run-20261106T120000Z",
+  "device_types": ["dissolved_oxygen_probe"],
+  "devices": 3,
+  "started_at": "2026-11-06T12:00:00Z"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `instance_id` | UUID generated at each process start |
+| `hostname` | Container hostname; tells a restart of the same container from a different worker |
+| `node` | Machine label (`NODE_NAME`); `null` when unknown |
+| `started_at` | Process start in UTC; used to decide conflicts |
+
+An empty retained payload on the topic removes a claim.
+
+Protocol, over a dedicated control connection with client id `registry-{instance}`:
+
+1. The worker connects with a **Last Will** that publishes an empty retained payload on its
+   claim topic. If the connection is lost without a clean disconnect (crash, `SIGKILL`,
+   keepalive timeout), the broker removes the claim.
+2. It subscribes to its own claim topic and waits 1 s for a retained claim.
+3. A claim from another hostname means the id is taken: the worker picks a random id and
+   starts again from step 1, up to 5 attempts. A claim with its own hostname was left by a
+   previous run of the same container, and the new claim replaces it.
+4. Otherwise it publishes its retained claim and waits 1 s more, so two workers that start
+   at the same moment see each other.
+5. While running, a conflicting claim is decided by precedence: the earlier `started_at`
+   wins, then the lower `instance_id`. The winner publishes its claim again. The loser stops
+   with exit code `3`, and its container restarts and claims a new id.
+6. On a clean shutdown, the worker publishes the empty retained payload.
+
+When the broker cannot be reached at startup, the worker continues with its id unverified
+and claims it as soon as it connects; any conflict is then decided by step 5. After a
+broker restart, the retained claims are lost (persistence is off), and every worker
+publishes its claim again when it reconnects.
+
+`monitoring-mqtt stack workers` lists the current claims.
+
+## Observability plane
+
+MQTT has no way to ask the broker who subscribes to what. Subscribers therefore announce
+their own status, using the usual MQTT presence pattern (retained status plus Last Will):
+
+```text
+monitoring/status/v1/monitors/{client_id}
+```
+
+Like the worker registry, this plane lives outside `monitoring/v1/#`, uses QoS 1 and is
+meant for operators and observer tools. **Publishers never read it**: devices publish the
+same way whether or not anyone consumes, so the data plane stays fully decoupled.
+
+| Event | Published by | Payload | Retained |
+|---|---|---|---|
+| Connection, then every 5 s | the monitor | `state: online` with counters | yes |
+| Connection lost without a clean disconnect | the broker (Last Will) | `state: offline`, no counters | yes |
+| Clean shutdown (`SIGTERM`) | the monitor | `state: stopped` with final counters, then an empty payload that removes the status | no / empty retained |
+
+Status payload (UTF-8 JSON):
+
+```json
+{
+  "schema_version": 1,
+  "client_id": "monitor-poultry-0279a8",
+  "monitor": "poultry",
+  "topic_filter": "monitoring/v1/poultry/#",
+  "node": "pc-lab-2",
+  "hostname": "0279a8f1c2d3",
+  "state": "online",
+  "started_at": "2026-11-06T12:00:00Z",
+  "updated_at": "2026-11-06T12:05:00Z",
+  "counters": {
+    "received": 1532,
+    "invalid": 2,
+    "devices_seen": 20,
+    "by_domain": {"poultry": 1532},
+    "latency_ms": {"last": 1.8, "avg": 2.1, "p95": 3.4},
+    "last_received_at": "2026-11-06T12:04:59.871Z",
+    "recent": [
+      {
+        "topic": "monitoring/v1/poultry/ammonia/poultry-3f9a1c-001",
+        "device_id": "poultry-3f9a1c-001",
+        "value": 12.6,
+        "unit": "ppm",
+        "sequence": 42,
+        "event_id": "9b2d7c1e-4f0a-4c8e-9a51-0d6e2f3b7a14",
+        "received_at": "2026-11-06T12:04:59.871Z",
+        "latency_ms": 1.8
+      }
+    ]
+  }
+}
+```
+
+- `node` is the machine label (`NODE_NAME`, set by the CLI to the hostname of the machine
+  that started the stack). Worker claims carry the same field. It is `null` when unknown.
+- `latency_ms` covers the latest 1000 messages. It is only meaningful when device and
+  monitor clocks are synchronized.
+- `recent` holds the latest 10 valid messages the monitor received, oldest first: what was
+  actually delivered to this subscriber. It is refreshed with every status (every 5 s).
+- An observer that subscribes to `monitoring/status/v1/monitors/+` receives the current
+  status of every monitor at once (retained), then every change.
+
 ## Reserved topic families (not implemented yet)
 
 ```text
-status/v1/{domain}/{device_id}             # presence, Last Will
 control/v1/{domain}/{device_id}/commands   # device commands
 alerts/v1/{domain}/{severity}              # derived alerts
 ```
