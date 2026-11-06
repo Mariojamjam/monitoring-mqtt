@@ -5,6 +5,10 @@ telemetry to topics on a central MQTT broker. Subscribers declare their interest
 topic filters, and the broker routes each message to every matching subscription.
 Publishers and subscribers never communicate directly.
 
+This document describes what runs today in detail. For the overall picture, including the
+planned storage, alerts, API and dashboard, and how every part communicates, see
+[design.md](design.md).
+
 > This document describes what is currently implemented. It grows as components are added.
 
 ## Components
@@ -23,7 +27,7 @@ Publishers and subscribers never communicate directly.
 ```text
 config/simulation.yaml ──┐   (experiment: versioned)
 config/devices.yaml ─────┼──► monitoring-mqtt stack up ──► variables ──► compose.yaml ──► containers
-.env ────────────────────┘   (machine: host port, smoke timeout; not versioned)
+.env ────────────────────┘   (machine: roles, broker address, host port, smoke timeout; not versioned)
 ```
 
 The CLI validates `config/simulation.yaml` against the device catalog before calling
@@ -76,7 +80,9 @@ less memory per device, and the planned experiments compare both granularities.
   also its MQTT `client_id`. `worker_id` derives from the container ID, so containers never
   share identities. After starting, `stack up` checks that every service runs the expected
   number of containers and that no two containers share a worker id. If either check
-  fails, it exits with an error.
+  fails, it exits with an error. Across machines, where the CLI cannot see the other
+  containers, each worker claims its id in the broker before creating its devices (see
+  [Worker registry](#worker-registry)).
 - **Scheduling.** A worker publishes from all its devices on a fixed-rate schedule, with
   start times spread evenly over one interval to avoid bursts. Before the first publication
   it waits, for at most 10 s, until its devices are connected.
@@ -99,12 +105,41 @@ container with its own MQTT client id, `monitor-{kind}-{container short id}`.
                               monitor-aquaculture × 20      no copy (filter does not match)
 ```
 
+Every monitor also publishes its status (online with counters, offline through its Last
+Will, stopped on a clean shutdown) on `monitoring/status/v1/monitors/{client_id}`. MQTT
+cannot list subscribers, so this observability plane is how operator tools see who is
+consuming. Publishers never read it: devices keep publishing with zero subscribers. See
+[mqtt-contract.md](mqtt-contract.md#observability-plane).
+
 MQTT 3.1.1 has no shared subscriptions, so N subscribers with the same filter receive N
 copies of each message (fan-out). Adding monitor replicas raises the broker's delivery work
 but does not spread the processing. This setup serves the planned experiment that measures
 the cost of fan-out. In a verified run with 20 aquaculture and 20 poultry monitors, the
 broker had 43 clients (3 devices and 40 monitors), and each ammonia event reached all 20
 poultry monitors and none of the aquaculture ones.
+
+### Worker registry
+
+A worker's id is part of every device client id it hosts. Two workers with the same id,
+for example on two machines, would make their devices take over each other's MQTT
+connections. Before creating devices, each worker claims its id with a retained message
+on `monitoring/registry/v1/workers/{worker_id}`, protected by a Last Will that removes the
+claim if the worker dies:
+
+```text
+ worker start ──► control connection (Last Will: clear claim)
+              ──► subscribe to its claim topic, wait 1 s
+                    ├─ claimed by another worker ──► random id, try again
+                    └─ free ──► publish retained claim, wait 1 s ──► create devices
+ running      ──► later conflict: earlier start wins; the loser exits (code 3) and restarts
+ clean stop   ──► clear claim
+```
+
+This is coordination through publish/subscribe only: the broker stores and routes the
+retained claims, and the workers decide. It adds about 2 s to a worker's start. The
+protocol is specified in [mqtt-contract.md](mqtt-contract.md#worker-registry), and
+`monitoring-mqtt stack workers` lists the workers registered in the broker from every
+machine.
 
 ## Data flow
 
@@ -131,10 +166,12 @@ publisher. The topic and payload contract is described in [mqtt-contract.md](mqt
 
 | Package | Responsibility | May depend on |
 |---|---|---|
-| `monitoring_mqtt.core` | Contract (topics, payload model), configuration, logging, MQTT client factory | Third-party libraries only |
-| `monitoring_mqtt.simulator` | Device catalog, generators, identities, `VirtualDevice`, `SimulationWorker`, simulator entrypoint | `core` |
+| `monitoring_mqtt.core` | Contract (topics, payload model, worker registry), configuration, logging, MQTT client factory | Third-party libraries only |
+| `monitoring_mqtt.simulator` | Device catalog, generators, identities, worker id registration, `VirtualDevice`, `SimulationWorker`, simulator entrypoint | `core` |
 | `monitoring_mqtt.consumers` | Subscribers (`monitor`) | `core` |
 | `monitoring_mqtt.testing` | Runtime checks against a running stack (`smoke`) | `core` |
+| `monitoring_mqtt.tools` | Auxiliary services: registry listing (`workers`) and the TCP `relay` | `core` |
+| `monitoring_mqtt.tui` | Read-only terminal UI (Textual): observer client, state model, screens | `core` |
 | `monitoring_mqtt.cli` | Operator commands that call `docker compose` and validate the topology | `core`, `simulator.catalog`. No other package imports `cli` |
 
 `core` never imports any other package of the project. The simulator never knows about
@@ -148,6 +185,9 @@ Each service is a module entrypoint that runs inside the shared application imag
 | `device-aquaculture`, `device-poultry`, `device-cattle` | `python -m monitoring_mqtt.simulator` (differ only by `DEVICE_TYPES`) |
 | `monitor-aquaculture`, `monitor-poultry`, `monitor-cattle`, `monitor-all` | `python -m monitoring_mqtt.consumers.monitor` (differ only by `MQTT_TOPIC_FILTER`) |
 | `smoke` | `python -m monitoring_mqtt.testing.smoke` (one-off, profile `tools`) |
+| `workers` | `python -m monitoring_mqtt.tools.workers` (one-off, profile `tools`) |
+| `tui` | `python -m monitoring_mqtt.tui` (interactive one-off, profile `tools`; see [tui.md](tui.md)) |
+| `broker-relay` | `python -m monitoring_mqtt.tools.relay` (host network; only for a tunnel on the loopback with Docker Engine on Linux) |
 
 ## Deployment view
 
@@ -173,16 +213,21 @@ Each service is a module entrypoint that runs inside the shared application imag
   non-root user, and is shared by every Python service. There are no bind mounts.
 - **Health.** The broker has a healthcheck that reads the retained `$SYS/broker/version`
   topic. `stack up` waits for it to pass.
+- **Several machines.** The same project can be split across machines, for example the
+  broker on a Raspberry Pi and devices on other computers. Each machine runs the parts
+  listed in its `.env` and connects to the shared broker; see [distributed.md](distributed.md).
 
 ## Smoke test
 
-`monitoring-mqtt test smoke` first checks that the broker container is running. It then
+`monitoring-mqtt test smoke` first checks that the broker container is running, when this
+machine runs the broker. It then
 starts the `smoke` service once (`docker compose run --rm --no-deps smoke`) on the Compose
 network, so the test never relies on host port mapping and runs the same way from the host
 or a Dev Container. The container performs these checks:
 
-1. **Broker.** Two independent clients, a publisher and a subscriber, connect to
-   `broker:1883`, and the subscriber subscribes to `monitoring/v1/#`.
+1. **Broker.** Two independent clients, a publisher and a subscriber, connect to the
+   broker this machine uses (`broker:1883`, or `MQTT_BROKER_HOST`), and the subscriber
+   subscribes to `monitoring/v1/#`.
 2. **Probe round trip.** The publisher sends a valid probe measurement with a known
    `event_id` on `monitoring/v1/smoke/probe/smoke-<id>`. The check requires the broker's
    `PUBACK` and the arrival of that same `event_id` at the subscriber before the timeout
@@ -191,7 +236,8 @@ or a Dev Container. The container performs these checks:
 3. **Live telemetry.** At least one valid measurement from the running devices must arrive
    within a window derived from the experiment: twice the publish interval plus 5 s (15 s
    by default). The window therefore grows with slow experiments and never gives a false
-   failure.
+   failure. On a machine without the `devices` role the result is only reported, because
+   the devices may run elsewhere.
 
 The command exits with `0` only if every check passes, and with `1` otherwise. It also
 exits with `1`, without starting a container, when the stack is not running.
@@ -203,20 +249,31 @@ exits with `1`, without starting a container, when the stack is not running.
 | Broker not ready at startup | Services wait for the broker healthcheck. Clients also keep retrying on their own |
 | Broker restart | Clients reconnect automatically (backoff 1–30 s). Monitors subscribe again on every connection because sessions are clean |
 | Broker unreachable while publishing | The measurement is dropped and logged as a warning. The `sequence` gap stays visible to consumers |
-| Subscriber stopped | Publishers are unaffected and keep publishing |
+| Subscriber stopped | Publishers are unaffected and keep publishing. A clean stop removes the monitor's status; a lost connection leaves it `offline` (Last Will) |
 | Invalid message | The monitor logs it with the reason, counts it and keeps running |
-| `SIGTERM` (`docker stop`) | Services disconnect cleanly and log summary counters |
+| `SIGTERM` (`docker stop`) | Services disconnect cleanly and log summary counters. Workers remove their registry claim |
+| Worker killed or cut off | The broker publishes the worker's Last Will, which removes its registry claim |
+| Two workers with the same id | The later one switches to a random id before creating devices; a conflict found while running stops the later worker, which restarts with a new id |
 
 ## The CLI is outside the data path
 
 The CLI only translates commands into `docker compose` invocations. It never runs a
 publisher or subscriber in its own process, and the stack keeps running after the CLI exits.
 
+The terminal UI ([tui.md](tui.md)) is not in the data path either. It is a read-only
+subscriber that observes telemetry, the worker registry, the monitor status and the
+broker's `$SYS` statistics. Nothing in the stack depends on it.
+
 ## Security boundaries
 
 The broker accepts anonymous connections. This is acceptable only because the environment
-is a local, isolated lab and the port is bound to `127.0.0.1`. Any deployment beyond that
-requires authentication, TLS and ACLs.
+is an isolated lab: the port is bound to `127.0.0.1` by default, and a machine that exposes
+it to others (`MQTT_BIND_ADDRESS`) must stay on an isolated network or a private tunnel.
+Any deployment beyond that requires authentication, TLS and ACLs.
+
+The stack can be split across machines (for example the broker on one machine and devices
+on others) through the machine settings in `.env`; see [distributed.md](distributed.md).
+The components and the contract are the same; only where each service runs changes.
 
 A single broker is a single point of failure. The current architecture makes no claims of
 high availability.

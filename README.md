@@ -76,6 +76,8 @@ monitoring-mqtt stack logs device-aquaculture   # oxygen measurements being publ
 monitoring-mqtt stack logs monitor-aquaculture  # only aquaculture events, validated
 monitoring-mqtt stack logs monitor-poultry      # only poultry events, validated
 monitoring-mqtt stack logs monitor-cattle       # only cattle events, validated
+monitoring-mqtt tui                             # live view: publishers, broker, subscribers
+monitoring-mqtt stack workers                   # device workers registered in the broker
 monitoring-mqtt test smoke                      # end-to-end check of the running stack
 monitoring-mqtt stack down
 ```
@@ -96,6 +98,7 @@ each event from publisher to subscriber. Without installing the command, you can
 | `monitor-poultry` | Subscriber to `monitoring/v1/poultry/#` |
 | `monitor-cattle` | Subscriber to `monitoring/v1/cattle/#` |
 | `monitor-all` | Global subscriber to `monitoring/v1/#` (0 replicas by default) |
+| `broker-relay` | Forwards to a broker tunnel on this machine's loopback; started only when needed (see [distributed.md](docs/distributed.md#tunnels)) |
 
 Each virtual device publishes every 5 s over its own MQTT connection. Publishers and
 subscribers never know about each other. A device publishes whether or not any monitor
@@ -109,7 +112,7 @@ Configuration is split by purpose:
 |---|---|---|
 | [`config/simulation.yaml`](config/simulation.yaml) | Everything that defines an experiment | Yes |
 | [`config/devices.yaml`](config/devices.yaml) | The device catalog: what each sensor type measures and its synthetic range | Yes |
-| `.env` (copied from [`.env.example`](.env.example)) | Settings of your machine only: the host port and the smoke test timeout | No |
+| `.env` (copied from [`.env.example`](.env.example)) | Settings of your machine only: which parts of the stack run here, the broker address, the host port and the smoke test timeout | No |
 
 `config/simulation.yaml` describes one experiment. The defaults shown below run one
 container per device and one monitor per domain:
@@ -160,13 +163,15 @@ applies the file.
 |---|---|
 | `monitoring-mqtt --help` | Show available commands |
 | `monitoring-mqtt version` | Show the installed version |
-| `monitoring-mqtt doctor` | Check the environment (host or Dev Container), Python, uv, Docker (including the daemon ID), Compose and the project directory |
-| `monitoring-mqtt stack up [--build]` | Apply `config/simulation.yaml`, start the stack in the background, wait until it is healthy, then print and verify the device topology |
+| `monitoring-mqtt doctor` | Check the environment (host or Dev Container), Python, uv, Docker (including the daemon ID), Compose, the project directory, this machine's roles and the broker connection |
+| `monitoring-mqtt stack up [--build] [--config FILE] [--run-id ID]` | Apply `config/simulation.yaml` (or `FILE`), start this machine's part of the stack in the background, wait until it is healthy, then print and verify the device topology |
+| `monitoring-mqtt stack workers` | List the device workers registered in the broker, from every machine |
+| `monitoring-mqtt tui [--config FILE]` | Open the read-only terminal UI: who publishes, the broker and who consumes, live |
 | `monitoring-mqtt stack down` | Stop and remove the stack containers and network |
 | `monitoring-mqtt stack status` | Show the state of every service |
 | `monitoring-mqtt stack logs [SERVICE] [--no-follow] [-n N]` | Show logs; follows by default, Ctrl+C stops following |
 | `monitoring-mqtt test unit [PYTEST ARGS]` | Run the unit tests; extra arguments go to pytest, e.g. `-k topics` |
-| `monitoring-mqtt test smoke` | Check the running stack end to end from inside the Compose network; exit code 0 means it passed |
+| `monitoring-mqtt test smoke [--config FILE]` | Check the broker this machine uses end to end from a container; exit code 0 means it passed |
 
 The global option `--project-dir PATH` selects the checkout to operate on. Without it, the
 CLI looks for the project in this order:
@@ -183,14 +188,18 @@ is up, it keeps running without the CLI.
 
 ## Documentation
 
+- [System design](docs/design.md): how every part communicates (MQTT, HTTP, SQL), with diagrams; implemented and planned components.
 - [Architecture](docs/architecture.md): components, data flow, failure behaviour and security boundaries.
 - [MQTT contract](docs/mqtt-contract.md): topics, payload schema, identities and QoS semantics.
 - [Development guide](docs/development.md): environment setup, configuration, tests and code quality.
+- [Terminal UI](docs/tui.md): screens, keys, data sources and demonstration scenarios.
+- [Running on several machines](docs/distributed.md): broker on one machine (for example a Raspberry Pi), devices and monitors on others.
 
 ## Limitations
 
-- The broker allows anonymous access. It is meant for an isolated local lab, and its port is
-  published only on `127.0.0.1`. Do not expose it to other networks.
+- The broker allows anonymous access. It is meant for an isolated lab: its port is published
+  only on `127.0.0.1` by default. Expose it to other machines (`MQTT_BIND_ADDRESS`) only on
+  an isolated network or through a private tunnel.
 - A single Mosquitto instance is a single point of failure. The stack makes no
   high-availability claims.
 - QoS 1 is at-least-once delivery, so duplicates are possible. Telemetry is not retained, so
