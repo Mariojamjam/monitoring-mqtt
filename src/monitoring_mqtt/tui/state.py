@@ -8,7 +8,9 @@ it. Sources:
 - monitor status (``monitoring/status/v1/monitors/+``): who consumes, with counters;
 - broker statistics (``$SYS/broker/#``): clients, message rates, uptime;
 - simulation ground truth (``monitoring/sim/v1/devices/+``): episodes in effect per device
-  (anomaly, pause, delay, disconnect, stop), announced by the workers.
+  (anomaly, pause, delay, disconnect, stop), announced by the workers;
+- alerts (``monitoring/alerts/v1/#``): open alerts (retained active state) and every
+  raised/cleared event of the alert engine.
 
 The operating range of each device type comes from the device catalog, so values outside
 the normal band can be highlighted.
@@ -19,6 +21,7 @@ monitors a device's topic is routed to is computed with the broker's filter matc
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections import Counter, deque
 from collections.abc import Iterable
@@ -26,6 +29,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 
+from monitoring_mqtt.core.alerts import ALERTS_PREFIX, AlertEvent, AlertState
+from monitoring_mqtt.core.identity import worker_of
 from monitoring_mqtt.core.models import Measurement
 from monitoring_mqtt.core.registry import REGISTRY_PREFIX, WorkerClaim
 from monitoring_mqtt.core.simulation import SIM_PREFIX, EpisodeKind, EpisodePhase, SimEvent
@@ -85,6 +90,7 @@ class EventKind(StrEnum):
     MONITOR_STOPPED = "monitor stopped"
     MONITOR_OFFLINE = "monitor offline"
     SIMULATED = "simulated"
+    ALERT = "alert"
     BROKER = "broker"
 
 
@@ -103,13 +109,6 @@ def _pretty(payload: bytes) -> str:
         return json.dumps(json.loads(payload), indent=2, ensure_ascii=False)
     except (ValueError, UnicodeDecodeError):
         return payload.decode("utf-8", errors="replace")
-
-
-def worker_of(device_id: str, domain: str) -> str:
-    """``{domain}-{worker_id}-{index}`` → ``worker_id``."""
-    prefix = f"{domain}-"
-    body = device_id[len(prefix) :] if device_id.startswith(prefix) else device_id
-    return body.rsplit("-", 1)[0] if "-" in body else body
 
 
 def _rate(arrivals: Iterable[float], now: float, window: float) -> float:
@@ -280,6 +279,7 @@ class SystemState:
         self.observer_id = observer_id
         self.bands = bands or {}  # device type → operating range
         self.episodes: dict[str, Episodes] = {}  # device id → simulated episodes
+        self.alerts: dict[tuple[str, str], AlertEvent] = {}  # open: (device, rule) → raised
         self.devices: dict[str, DeviceView] = {}
         self.workers: dict[str, WorkerView] = {}
         self.monitors: dict[str, MonitorView] = {}
@@ -307,6 +307,8 @@ class SystemState:
             self._status(item)
         elif item.topic.startswith(f"{SIM_PREFIX}/devices/"):
             self._simulated(item)
+        elif item.topic.startswith(f"{ALERTS_PREFIX}/"):
+            self._alert(item)
         elif item.topic.startswith(SYS_PREFIX):
             self.broker.values[item.topic[len(SYS_PREFIX) :]] = item.payload.decode(
                 "utf-8", errors="replace"
@@ -416,6 +418,43 @@ class SystemState:
             item.received_at, EventKind.SIMULATED, event.device_id, detail,
             payload=_pretty(item.payload),
         )  # fmt: skip
+
+    def _alert(self, item: Message) -> None:
+        parts = item.topic.split("/")
+        if parts[3] == "active":  # monitoring/alerts/v1/active/{device}/{rule}, retained
+            key = (parts[4], parts[5]) if len(parts) == 6 else None
+            if key is None:
+                return
+            if not item.payload:
+                self.alerts.pop(key, None)
+                return
+            with contextlib.suppress(ValueError):
+                self.alerts[key] = AlertEvent.from_payload(item.payload)
+            return
+        try:
+            event = AlertEvent.from_payload(item.payload)
+        except ValueError:
+            return
+        unit = f" {event.unit}" if event.unit else ""
+        if event.state is AlertState.RAISED:
+            text = (f"{event.rule_id} {event.severity.value}: {event.value:g}{unit} "
+                    f"{event.condition.value} {event.threshold:g}")  # fmt: skip
+        else:
+            text = f"{event.rule_id} cleared at {event.value:g}{unit}"
+        self._event(item.received_at, EventKind.ALERT, event.device_id, text,
+                    domain=event.domain, payload=_pretty(item.payload))  # fmt: skip
+
+    def alerts_of(self, device_id: str) -> list[AlertEvent]:
+        return [a for (device, _), a in sorted(self.alerts.items()) if device == device_id]
+
+    def open_alerts(self) -> list[AlertEvent]:
+        return sorted(self.alerts.values(), key=lambda a: (a.severity != "critical", a.at))
+
+    def stored(self) -> int | None:
+        """Events stored by the ingestion consumer, if it reports its status."""
+        ingestion = self.monitors.get("ingestion")
+        delivery = ingestion.status.delivery if ingestion else None
+        return delivery.stored if delivery else None
 
     def _claim(self, item: Message) -> None:
         worker_id = item.topic.rsplit("/", 1)[-1]

@@ -115,6 +115,7 @@ class MonitoringApp(App[None]):
         Binding("p", "pause", "Pause events"),
         Binding("t", "toggle_telemetry", "Telemetry in events"),
         Binding("h", "toggle_inactive", "Hide inactive"),
+        Binding("a", "alerts", "Open alerts"),
         Binding("escape", "leave_filter", "Back", show=False),
         Binding("q", "quit", "Quit"),
     ]
@@ -374,6 +375,10 @@ class MonitoringApp(App[None]):
 
     def _show_detail(self, title: str, body: RenderableType, origin: DataTable) -> None:
         self.push_screen(DetailScreen(title, body), callback=lambda _: origin.focus())
+
+    def action_alerts(self) -> None:
+        body = render.alerts_table(self.state, self.clock())
+        self.push_screen(DetailScreen(f"Open alerts ({len(self.state.alerts)})", body))
 
     def action_filter(self) -> None:
         active = self.query_one("#tabs", TabbedContent).active

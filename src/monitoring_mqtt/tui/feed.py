@@ -15,6 +15,7 @@ from dataclasses import replace
 import paho.mqtt.client as mqtt
 
 from monitoring_mqtt.core import mqtt as mqtt_helpers
+from monitoring_mqtt.core.alerts import ALERT_QOS, ALERTS_FILTER
 from monitoring_mqtt.core.config import MqttSettings
 from monitoring_mqtt.core.registry import CLAIM_QOS, WORKER_CLAIMS_FILTER
 from monitoring_mqtt.core.simulation import SIM_EVENTS_FILTER, SIM_QOS
@@ -32,6 +33,7 @@ def subscriptions(telemetry_qos: int) -> list[tuple[str, int]]:
         (WORKER_CLAIMS_FILTER, CLAIM_QOS),
         (MONITOR_STATUS_FILTER, STATUS_QOS),
         (SIM_EVENTS_FILTER, SIM_QOS),
+        (ALERTS_FILTER, ALERT_QOS),
         (BROKER_STATS_FILTER, 0),
     ]
 

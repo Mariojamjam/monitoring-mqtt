@@ -92,14 +92,22 @@ MODE_STYLE = {
 ARROWS = {"high": "↑", "low": "↓"}
 
 
+ALERT_STYLE = {"critical": "bold white on red", "warning": "bold yellow"}
+
+
 def mode_text(state: SystemState, device_id: str) -> Text:
-    """Simulated episodes in effect (ground truth), e.g. ``stop  anomaly ↑``."""
+    """Simulated episodes (ground truth) and open alerts (detection), e.g.
+    ``anomaly ↑  alert critical``: the cause next to what the alert engine saw."""
     text = Text()
     for event in state.mode_of(device_id).active:
         if text:
             text.append("  ")
         label = event.kind.value + (f" {ARROWS[event.direction]}" if event.direction else "")
         text.append(label, style=MODE_STYLE[event.kind])
+    for alert in state.alerts_of(device_id):
+        if text:
+            text.append("  ")
+        text.append(f"alert {alert.severity.value}", style=ALERT_STYLE[alert.severity.value])
     return text or Text("normal", style="dim")
 
 
@@ -130,6 +138,14 @@ def header(state: SystemState, broker_label: str, now: float) -> Text:
         text.append(f"   invalid {state.invalid}", style="red")
     if state.missing_total():
         text.append(f"   missing {state.missing_total()}", style="yellow")
+    if state.stored() is not None:
+        text.append(f"   stored {state.stored()}", style="cyan")
+    open_alerts = state.open_alerts()
+    if open_alerts:
+        critical = sum(a.severity == "critical" for a in open_alerts)
+        text.append(f"   alerts {len(open_alerts)}", style="bold yellow")
+        if critical:
+            text.append(f" ({critical} critical)", style="bold red")
     text.append(f"   {datetime.fromtimestamp(now, UTC):%H:%M:%S} UTC", style="dim")
     return text
 
@@ -361,6 +377,16 @@ def monitor_detail(state: SystemState, monitor: MonitorView, now: float) -> Grou
             summary.append("\nby domain  " + "  ".join(
                 f"{domain} {count}" for domain, count in sorted(counters.by_domain.items())
             ))  # fmt: skip
+    if status.delivery:
+        d = status.delivery
+        summary.append(
+            f"\nstores via {d.api_url}  stored {d.stored}  duplicates {d.duplicates}  "
+            f"buffered {d.buffered}  dropped {d.dropped}  API errors {d.api_errors}"
+        )
+    if status.alerts:
+        a = status.alerts
+        by = "  ".join(f"{s} {n}" for s, n in sorted(a.open_by_severity.items()))
+        summary.append(f"\nalerts open {a.open} {by}  raised {a.raised}  cleared {a.cleared}")
     table = Table(
         title="Received (reported by the monitor, newest first)",
         title_justify="left",
@@ -400,6 +426,26 @@ def _band(state: SystemState, device: DeviceView) -> str:
         return "-"
     unit = f" {device.unit}" if device.unit else ""
     return f"{band.minimum:g} - {band.maximum:g}{unit}"
+
+
+def alerts_table(state: SystemState, now: float) -> Table:
+    """Open alerts, critical first."""
+    table = Table(expand=True, show_edge=False)
+    for column in ("Severity", "Rule", "Device", "Value", "Condition", "Open for"):
+        table.add_column(column, no_wrap=True)
+    for alert in state.open_alerts():
+        unit = f" {alert.unit}" if alert.unit else ""
+        table.add_row(
+            Text(alert.severity.value, style=ALERT_STYLE[alert.severity.value]),
+            alert.rule_id,
+            Text(alert.device_id, style=domain_color(alert.domain)),
+            f"{alert.value:g}{unit}",
+            f"{alert.condition.value} {alert.threshold:g}",
+            duration(now - alert.at.timestamp()),
+        )
+    if not state.alerts:
+        table.add_row(Text("no open alerts", style="dim"), "", "", "", "", "")
+    return table
 
 
 def device_detail(state: SystemState, device: DeviceView, now: float) -> Group:
