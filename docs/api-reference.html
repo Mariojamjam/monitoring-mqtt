@@ -337,8 +337,8 @@
         "tags": [
           "measurements"
         ],
-        "summary": "List measurements, newest first",
-        "description": "Filters combine with AND. Each item carries its three times: generated on the\ndevice, received by the ingestion consumer, stored by the database.",
+        "summary": "List measurements",
+        "description": "Newest first, by the time the device generated them. Filters combine with AND.\nEach item carries its three times: generated on the device, received by the ingestion\nconsumer, stored by the database.",
         "operationId": "list_measurements_api_measurements_get",
         "parameters": [
           {
@@ -606,8 +606,8 @@
         "tags": [
           "alerts"
         ],
-        "summary": "List alerts, newest first",
-        "description": "Ordered by the time the alert was raised. `from`/`to` filter on that time too.",
+        "summary": "List alerts",
+        "description": "Newest first, by the time the alert was raised. `from`/`to` filter on that time too.",
         "operationId": "list_alerts_api_alerts_get",
         "parameters": [
           {
@@ -868,8 +868,8 @@
         "tags": [
           "runs"
         ],
-        "summary": "List runs, newest first",
-        "description": "Every `run_id` seen in the measurements, with what was stored for it.",
+        "summary": "List runs",
+        "description": "Every `run_id` seen in the measurements, with what was stored for it. Newest first,\nby the time of the run's first measurement.",
         "operationId": "list_runs_api_runs_get",
         "parameters": [
           {

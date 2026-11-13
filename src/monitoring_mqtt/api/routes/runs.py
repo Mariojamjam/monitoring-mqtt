@@ -11,9 +11,10 @@ from monitoring_mqtt.api.routes.common import NOT_FOUND, UNAVAILABLE, Limit
 router = APIRouter(tags=["runs"], responses=UNAVAILABLE)
 
 
-@router.get("/runs", summary="List runs, newest first")
+@router.get("/runs", summary="List runs")
 def list_runs(store: StoreDep, limit: Limit = 100) -> list[schemas.Run]:
-    """Every `run_id` seen in the measurements, with what was stored for it."""
+    """Every `run_id` seen in the measurements, with what was stored for it. Newest first,
+    by the time of the run's first measurement."""
     return [schemas.Run.model_validate(r) for r in store.list_runs(limit=limit)]
 
 

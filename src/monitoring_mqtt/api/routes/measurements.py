@@ -17,7 +17,7 @@ MIN_BUCKET_SECONDS = 1.0
 MAX_POINTS = 2000
 
 
-@router.get("", summary="List measurements, newest first")
+@router.get("", summary="List measurements")
 def list_measurements(
     store: StoreDep,
     device_id: str | None = None,
@@ -29,8 +29,9 @@ def list_measurements(
     limit: Limit = 100,
     cursor: Cursor = None,
 ) -> schemas.Page[schemas.Measurement]:
-    """Filters combine with AND. Each item carries its three times: generated on the
-    device, received by the ingestion consumer, stored by the database."""
+    """Newest first, by the time the device generated them. Filters combine with AND.
+    Each item carries its three times: generated on the device, received by the ingestion
+    consumer, stored by the database."""
     page = store.list_measurements(
         device_id=device_id, domain=domain, metric=metric, run_id=run_id,
         since=since, until=until, limit=limit, cursor=cursor,
