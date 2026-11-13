@@ -41,6 +41,7 @@ def test_observer_subscribes_to_every_plane() -> None:
         "monitoring/registry/v1/workers/+",
         "monitoring/status/v1/monitors/+",
         "monitoring/sim/v1/devices/+",
+        "monitoring/alerts/v1/#",
         "$SYS/broker/#",
     ]
 
@@ -249,3 +250,28 @@ def test_simulated_episodes_and_normal_band() -> None:
 def test_no_band_means_unknown_range(state: SystemState) -> None:
     state.apply(telemetry("poultry-fc5336-001", 1, E0, value=99))
     assert state.out_of_range(state.devices["poultry-fc5336-001"]) is None
+
+
+def alert_message(state: str, at: float, active: bool = False) -> Message:
+    from monitoring_mqtt.consumers.rules import AlertEvaluator, Rule
+    from monitoring_mqtt.core.alerts import AlertState
+
+    evaluator = AlertEvaluator([Rule(id="ammonia-high", device_type="poultry_type", above=25)])
+    m = Measurement.from_payload(telemetry("poultry-fc5336-001", 1, E0, value=30).payload)
+    event = evaluator.evaluate(m)[0]
+    if state == "cleared":
+        event = event.model_copy(update={"state": AlertState.CLEARED, "value": 20})
+    topic = event.active_topic if active else event.topic
+    payload = b"" if active and state == "cleared" else event.to_payload()
+    return Message(topic, payload, at)
+
+
+def test_open_alerts_and_alert_events(state: SystemState) -> None:
+    state.apply_all([alert_message("raised", E0), alert_message("raised", E0, active=True)])
+    assert [a.rule_id for a in state.alerts_of("poultry-fc5336-001")] == ["ammonia-high"]
+    assert state.notable[-1].kind is EventKind.ALERT
+    assert state.notable[-1].text == "ammonia-high warning: 30 ppm above 25"
+    state.apply_all([alert_message("cleared", E0 + 1),
+                     alert_message("cleared", E0 + 1, active=True)])  # fmt: skip
+    assert state.open_alerts() == []
+    assert state.notable[-1].text == "ammonia-high cleared at 20 ppm"

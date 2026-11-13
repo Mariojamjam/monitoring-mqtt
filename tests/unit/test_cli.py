@@ -111,3 +111,20 @@ def test_machine_check_invalid_settings(project: Path) -> None:
     (project / ".env").write_text("STACK_ROLES=toaster\n")
     [roles] = doctor.check_machine(project, _unreachable, environment="host (Linux)")
     assert roles.status is Status.FAIL
+
+
+def test_doctor_checks_the_api_on_storage_machines(project: Path) -> None:
+    def answering(status: int):
+        return lambda url: status
+
+    def down(url: str) -> int:
+        raise OSError("connection refused")
+
+    (ok,) = doctor.check_api(project, answering(200), environment="host (Linux)")
+    assert ok.status is doctor.Status.OK and "http://127.0.0.1:8000/docs" in ok.detail
+    (no_db,) = doctor.check_api(project, answering(503), environment="host (Linux)")
+    assert no_db.status is doctor.Status.FAIL and "database" in no_db.detail
+    (stopped,) = doctor.check_api(project, down, environment="host (Linux)")
+    assert stopped.status is doctor.Status.WARN
+    (project / ".env").write_text("STACK_ROLES=broker,devices\n")
+    assert doctor.check_api(project, answering(200), environment="host (Linux)") == []
