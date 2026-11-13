@@ -73,6 +73,11 @@ def test_compose_always_targets_fixed_project_and_file(project: Path) -> None:
         (["down"], ["down", "--remove-orphans"]),
         (["logs"], ["logs", "--tail", "100", "--follow"]),
         (["logs", "broker", "--no-follow", "-n", "5"], ["logs", "--tail", "5", "broker"]),
+        (["restart"], ["restart"]),
+        (
+            ["restart", "broker", "monitor-poultry", "-t", "2"],
+            ["restart", "--timeout", "2", "broker", "monitor-poultry"],
+        ),
     ],
 )
 def test_commands_map_to_compose(
@@ -149,6 +154,15 @@ def test_up_rejects_invalid_topology_before_calling_docker(
 def test_up_preserves_compose_exit_code(stack_project: Path, monkeypatch) -> None:
     use_docker(monkeypatch, FakeDocker(up_code=17))
     assert invoke(stack_project, "up").exit_code == 17
+
+
+def test_restart_preserves_compose_exit_code(project: Path, monkeypatch) -> None:
+    def unknown_service(command: list[str], check: bool, **kwargs):
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr(compose.subprocess, "run", unknown_service)
+    result = invoke(project, "restart", "no-such-service")
+    assert result.exit_code == 1
 
 
 def test_missing_docker_exits_127(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:

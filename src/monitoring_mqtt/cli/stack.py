@@ -439,6 +439,28 @@ def status(ctx: typer.Context) -> None:
 
 
 @app.command()
+def restart(
+    ctx: typer.Context,
+    services: Annotated[
+        list[str] | None, typer.Argument(help="Services to restart (default: all).")
+    ] = None,
+    timeout: Annotated[
+        int | None,
+        typer.Option("--timeout", "-t", min=0, help="Seconds to wait for a clean stop."),
+    ] = None,
+) -> None:
+    """Restart running containers as they are (same run id and settings).
+
+    Use it to provoke a restart, e.g. 'stack restart broker'. To apply a changed
+    config/simulation.yaml or start a new run, use 'stack up'.
+    """
+    args = ["restart"]
+    if timeout is not None:
+        args += ["--timeout", str(timeout)]
+    _compose(ctx, *args, *(services or []))
+
+
+@app.command()
 def logs(
     ctx: typer.Context,
     service: Annotated[str | None, typer.Argument(help="Service name (default: all).")] = None,
