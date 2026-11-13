@@ -13,6 +13,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Input, Static, TabbedContent, TabPane
 
@@ -206,7 +207,10 @@ class MonitoringApp(App[None]):
         self.history["observed"].append(self.state.observed_rate(now))
         self.history["in"].append(self.state.broker.per_second("received") or 0.0)
         self.history["out"].append(self.state.broker.per_second("sent") or 0.0)
-        self.refresh_view(now)
+        try:
+            self.refresh_view(now)
+        except NoMatches:
+            return  # the timer fired once more while the app shut down its widgets
 
     def refresh_view(self, now: float | None = None) -> None:
         now = self.clock() if now is None else now
