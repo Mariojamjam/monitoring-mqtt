@@ -1,8 +1,14 @@
 import pytest
 
 from monitoring_mqtt.core.config import MqttSettings
-from monitoring_mqtt.simulator.catalog import DeviceCatalog, DeviceType
-from monitoring_mqtt.simulator.factory import build_devices, select_types
+from monitoring_mqtt.simulator.catalog import DeviceCatalog, DeviceType, MeanRevertingSpec
+from monitoring_mqtt.simulator.factory import (
+    build_devices,
+    build_generator,
+    device_mean,
+    select_types,
+)
+from monitoring_mqtt.simulator.generators import MeanRevertingGenerator
 
 
 def fake_device(**kwargs):
@@ -51,6 +57,20 @@ def test_generators_reproducible_per_seed_and_independent_per_device(
 
     assert series(build(probes, 2), 0) == series(build(probes, 2), 0)
     assert series(build(probes, 2), 0) != series(build(probes, 2), 1)
+
+
+def test_site_spread_gives_each_device_its_own_mean(catalog: DeviceCatalog) -> None:
+    spec = MeanRevertingSpec(
+        kind="mean_reverting", mean=6.5, alpha=0.3, noise=0.2, site_spread=0.4,
+        minimum=2.0, maximum=12.0,
+    )  # fmt: skip
+    means = {device_mean(spec, 42, f"aquaculture-abc123-{i:03d}") for i in range(1, 6)}
+    assert len(means) == 5 and all(6.1 <= m <= 6.9 for m in means)
+    assert device_mean(spec, 42, "aquaculture-abc123-001") == device_mean(
+        spec, 42, "aquaculture-abc123-001"
+    )
+    generator = build_generator(spec, 42, "aquaculture-abc123-001")
+    assert isinstance(generator, MeanRevertingGenerator)
 
 
 def test_select_types_rejects_unknown(catalog: DeviceCatalog) -> None:
