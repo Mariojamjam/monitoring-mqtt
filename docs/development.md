@@ -88,6 +88,7 @@ from inside the checkout, for example `uv run monitoring-mqtt doctor`.
 monitoring-mqtt stack up --build   # build images, start, wait for healthchecks
 monitoring-mqtt stack status
 monitoring-mqtt stack logs broker
+monitoring-mqtt stack restart broker  # restart as is (same run id); see failures.md
 monitoring-mqtt stack down
 ```
 
@@ -128,7 +129,7 @@ MQTT_HOST=127.0.0.1 PUBLISH_INTERVAL_SECONDS=1 uv run python -m monitoring_mqtt.
 | Kind | Where | Examples |
 |---|---|---|
 | Experiment | `config/simulation.yaml` (versioned) | run id, seed, log level, QoS, keepalive, clean session, reconnect backoff, publish interval, workers, monitors |
-| Device catalog | `config/devices.yaml` (versioned, baked into the image) | types, domains, metrics, units, synthetic ranges |
+| Device catalog | `config/devices.yaml` (versioned, baked into the image) | types, domains, metrics, units, generators, normal bands, anomaly targets |
 | Machine | `.env` (git-ignored, from `.env.example`) | `STACK_ROLES`, `MQTT_BROKER_HOST`, `MQTT_BROKER_PORT`, `MQTT_BIND_ADDRESS`, `MQTT_HOST_PORT`, `NODE_NAME`, `SMOKE_TIMEOUT_SECONDS` |
 | Contract and internals | code (documented) | MQTT 3.1.1, port 1883, `retain=false`, topics, schema, validation limits |
 
@@ -168,9 +169,11 @@ Invalid values stop the service at startup with exit code `2` and a clear messag
 monitoring-mqtt test unit              # unit tests (runs pytest in the project environment)
 monitoring-mqtt test unit -k topics    # extra arguments are passed to pytest
 monitoring-mqtt test smoke             # end-to-end check against the running stack
+monitoring-mqtt test integration       # integration suite on an isolated stack (Docker, ~2 min)
 ```
 
-`test unit` runs `uv run --frozen pytest tests/unit` in the project directory. pytest is a
+`test unit` runs `uv run --frozen pytest tests/unit` in the project directory. `pytest`
+alone also runs only the unit tests (`testpaths` in `pyproject.toml`). pytest is a
 development dependency, so it lives in the project environment and not in the installed
 CLI. Running `uv run pytest` directly is equivalent. The exit code is the one from pytest.
 
@@ -191,6 +194,35 @@ machine has no broker role. It is described in
 | `probe round trip` | The broker accepts connections but does not route messages |
 | `live telemetry` | No device worker is publishing; check `config/simulation.yaml` and `stack logs`. Reported as a warning only on machines without the `devices` role |
 
+### Integration tests
+
+`monitoring-mqtt test integration` runs `tests/integration` against real containers. The
+tests start their **own stack** through the real CLI (`stack up --build` with
+`tests/integration/experiment.yaml`) under the Compose project `monitoring-mqtt-it`, on a
+free port of `127.0.0.1`, and remove it at the end. The stack you use, `monitoring-mqtt`,
+keeps running untouched. The project name comes from the test-only variable
+`MONITORING_MQTT_COMPOSE_PROJECT`; never set it for normal use.
+
+The test experiment publishes every 0.5 s with a 5 s keepalive, so failures are detected
+in seconds and the whole suite takes about 2 minutes. The tests observe the system only
+through the broker, like any client: telemetry, the worker registry, each monitor's own
+status (what it received) and the simulation ground truth.
+
+| File | Checks |
+|---|---|
+| `test_1_routing.py` | One client per device; each monitor receives only its domain; `monitor-all` receives every domain; replicas get the same messages (fan-out) |
+| `test_2_consumers.py` | Invalid payloads (not JSON, schema error, payload of another device) are counted and the monitor keeps consuming |
+| `test_3_decoupling.py` | Devices publish without gaps with no monitor running; a killed monitor is `offline` (Last Will); a killed worker leaves the registry and returns with the same id; a second worker with a taken id picks another |
+| `test_4_behaviour.py` | A scheduled anomaly matches its ground truth and leaves the normal band; live `stop` (no gap, neighbour unaffected), `disconnect` (gap), `delay` (late, complete), `pause` (silence); rejected and unanswered commands |
+| `test_5_cli.py` | `stack workers`, `test smoke` and `stack restart` end to end |
+| `test_6_recovery.py` | Broker restart: everyone reconnects and receives again; network cut: the broker detects it by keepalive and the worker comes back |
+
+Inside the Dev Container, whose `localhost` is not the host's, the tests join the test
+network and reach the broker as `broker:1883`. Set `IT_KEEP_STACK=1` to keep the test stack
+after the run (for its logs); remove it with
+`docker compose -p monitoring-mqtt-it down`. Extra arguments go to pytest, for example
+`monitoring-mqtt test integration -k recovery`.
+
 ## Code quality
 
 ```bash
@@ -200,6 +232,11 @@ uv run ruff format .       # format
 
 Before submitting changes, `uv run ruff check .`, `uv run ruff format --check .` and
 `monitoring-mqtt test unit` must all pass.
+
+GitHub Actions runs the same checks on every push to `main` and on pull requests
+(`.github/workflows/ci.yml`), with the locked dependencies and the same uv version as the
+Dev Container. A second job then runs the integration suite on the runner's Docker and,
+if it fails, attaches the test stack's logs to the run.
 
 ## Layout
 
@@ -217,6 +254,7 @@ src/monitoring_mqtt/
 │   ├── topics.py        # topic building, parsing and filters
 │   ├── models.py        # Measurement payload model (Pydantic)
 │   ├── registry.py      # worker registry contract (claim topic and payload)
+│   ├── simulation.py    # simulation plane: ground truth events, device commands
 │   ├── status.py        # observability plane: monitor status topic and payload
 │   ├── config.py        # environment configuration
 │   ├── mqtt.py          # Paho client factory, reconnection
@@ -227,11 +265,14 @@ src/monitoring_mqtt/
 │   ├── __main__.py      # simulator entrypoint (builds and runs a worker)
 │   ├── catalog.py       # device type catalog (YAML + validation)
 │   ├── factory.py       # builds a worker's devices (round-robin types, ids, sites)
-│   ├── worker.py        # SimulationWorker: M devices, fixed-rate schedule
+│   ├── worker.py        # SimulationWorker: M devices, fixed-rate schedule, episodes
+│   ├── behavior_config.py # the experiment's `behavior` section (durations, faults)
+│   ├── behavior.py      # episodes per device: random, scheduled, live commands
+│   ├── plane.py         # worker's simulation plane client (events, commands)
 │   ├── device.py        # VirtualDevice: own MQTT client, sequence, generator
 │   ├── identity.py      # worker_id and device_id
 │   ├── registration.py  # claims the worker id in the broker registry
-│   └── generators/      # MeasurementGenerator protocol, bounded-noise generator
+│   └── generators/      # mean-reverting and bounded-noise generators (steerable)
 ├── consumers/
 │   └── monitor.py       # generic monitor (entrypoint)
 ├── testing/
@@ -244,17 +285,21 @@ src/monitoring_mqtt/
 │   └── app.py           # Textual application: screens, keys, refresh
 ├── tools/
 │   ├── workers.py       # lists registry claims (runs as the `workers` service)
+│   ├── control.py       # sends a live command to a device (runs as `control`)
 │   └── relay.py         # TCP relay to a loopback tunnel (runs as `broker-relay`)
 └── cli/
     ├── main.py          # Typer application (entry point: monitoring-mqtt)
     ├── project.py       # project root resolution
     ├── doctor.py        # environment checks, including broker reachability
     ├── machine.py       # machine settings (.env): roles and broker address
+    ├── device.py        # `device` commands (live control through the broker)
     ├── dockerhost.py    # Docker Desktop vs Engine: what host.docker.internal reaches
     ├── tui.py           # monitoring-mqtt tui (starts the `tui` service)
     ├── compose.py       # docker compose runner (argv list, exit code preserved)
     ├── simulation.py    # config/simulation.yaml → validated experiment → Compose variables
-    ├── testing.py       # test unit / test smoke
-    └── stack.py         # stack up/down/status/logs/workers
-tests/unit/              # unit tests
+    ├── testing.py       # test unit / integration / smoke
+    └── stack.py         # stack up/down/restart/status/logs/workers
+tests/unit/              # unit tests (no Docker, no broker)
+tests/integration/       # integration tests (isolated stack: monitoring-mqtt-it)
+config/examples/         # ready-made experiments (anomalies, instability, faults)
 ```

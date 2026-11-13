@@ -42,7 +42,8 @@ flowchart LR
   CLI["monitoring-mqtt CLI"]
   DOCKER["Docker Compose"]
 
-  DEV -- "MQTT PUBLISH QoS 1<br/>telemetry + worker claim" --> BROKER
+  DEV -- "MQTT PUBLISH QoS 1<br/>telemetry, worker claim,<br/>simulation ground truth" --> BROKER
+  BROKER -- "MQTT deliver<br/>device commands" --> DEV
   BROKER -- "MQTT deliver<br/>by topic filter" --> MON
   MON -- "MQTT PUBLISH<br/>status (retained, Last Will)" --> BROKER
   BROKER -- "MQTT deliver<br/>telemetry, claims, status, $SYS" --> TUI
@@ -56,6 +57,7 @@ flowchart LR
   ST -. "HTTP GET JSON<br/>polling" .-> API
 
   CLI -- "docker compose<br/>argv, env" --> DOCKER
+  CLI -- "MQTT PUBLISH<br/>device command (via control service)" --> BROKER
   DOCKER -- "creates and restarts<br/>containers" --> DEV & BROKER & MON
 ```
 
@@ -77,9 +79,11 @@ without the CLI.
 |---|---|---|---|---|
 | Device | Broker | MQTT PUBLISH, QoS 1 | `monitoring/v1/{domain}/{metric}/{device_id}`: one JSON measurement | implemented |
 | Worker | Broker | MQTT retained + Last Will | `monitoring/registry/v1/workers/{id}`: claim of its worker id | implemented |
+| Worker | Broker | MQTT PUBLISH, QoS 1 | `monitoring/sim/v1/devices/{device_id}`: ground truth, an episode started or ended | implemented |
+| CLI (`control` service) | Worker | MQTT PUBLISH, QoS 1, via broker | `monitoring/control/v1/workers/{id}/devices/{device_id}`: live command; the worker acknowledges on `…/acks/{request_id}` | implemented |
 | Broker | Monitors | MQTT delivery | Telemetry matching each monitor's filter, e.g. `monitoring/v1/poultry/#` | implemented |
 | Monitor | Broker | MQTT retained + Last Will | `monitoring/status/v1/monitors/{client_id}`: filter, counters, last messages received | implemented |
-| Broker | TUI | MQTT delivery | Telemetry, worker claims, monitor status, `$SYS` broker statistics | implemented |
+| Broker | TUI | MQTT delivery | Telemetry, worker claims, monitor status, simulation ground truth, `$SYS` broker statistics | implemented |
 | Broker | Ingestion consumer | MQTT delivery | All telemetry (`monitoring/v1/#`) and alerts | planned |
 | Ingestion consumer | FastAPI | HTTP POST, JSON | Batches of measurements and alerts to store | planned |
 | FastAPI | PostgreSQL | SQL (write) | Measurements and alerts; duplicates dropped by `event_id` | planned |

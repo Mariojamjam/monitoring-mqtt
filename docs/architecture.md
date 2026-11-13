@@ -21,6 +21,7 @@ planned storage, alerts, API and dashboard, and how every part communicates, see
 | `monitor-aquaculture`, `monitor-poultry`, `monitor-cattle` services | Implemented | Generic monitor, one service per domain, subscribed to `monitoring/v1/{domain}/#`; N replicas from the topology |
 | `monitor-all` service | Implemented (0 replicas by default) | Same monitor code, subscribed to `monitoring/v1/#` |
 | `smoke` service (profile `tools`) | Implemented | One-off end-to-end check started by `monitoring-mqtt test smoke`; never part of `stack up` |
+| `control` service (profile `tools`) | Implemented | One-off live command to one device, started by `monitoring-mqtt device ...`; goes through the broker to the worker hosting the device |
 
 ## Configuration
 
@@ -86,6 +87,10 @@ less memory per device, and the planned experiments compare both granularities.
 - **Scheduling.** A worker publishes from all its devices on a fixed-rate schedule, with
   start times spread evenly over one interval to avoid bursts. Before the first publication
   it waits, for at most 10 s, until its devices are connected.
+- **Behaviour.** Each device can go through episodes: anomalies, pauses, delays,
+  disconnections, being switched off. They come from the experiment's `behavior` section
+  (random or scheduled) or from live commands, apply to that device only, and are announced
+  on the simulation plane ([simulation.md](simulation.md)).
 - **Failure granularity.** A device that fails only affects itself, because the worker
   catches the error and keeps the other devices running. A worker container that fails
   takes down all the devices it hosts.
@@ -167,7 +172,7 @@ publisher. The topic and payload contract is described in [mqtt-contract.md](mqt
 | Package | Responsibility | May depend on |
 |---|---|---|
 | `monitoring_mqtt.core` | Contract (topics, payload model, worker registry), configuration, logging, MQTT client factory | Third-party libraries only |
-| `monitoring_mqtt.simulator` | Device catalog, generators, identities, worker id registration, `VirtualDevice`, `SimulationWorker`, simulator entrypoint | `core` |
+| `monitoring_mqtt.simulator` | Device catalog, generators, identities, worker id registration, behaviour (episodes), simulation plane client, `VirtualDevice`, `SimulationWorker`, simulator entrypoint | `core` |
 | `monitoring_mqtt.consumers` | Subscribers (`monitor`) | `core` |
 | `monitoring_mqtt.testing` | Runtime checks against a running stack (`smoke`) | `core` |
 | `monitoring_mqtt.tools` | Auxiliary services: registry listing (`workers`) and the TCP `relay` | `core` |
@@ -253,7 +258,10 @@ exits with `1`, without starting a container, when the stack is not running.
 | Invalid message | The monitor logs it with the reason, counts it and keeps running |
 | `SIGTERM` (`docker stop`) | Services disconnect cleanly and log summary counters. Workers remove their registry claim |
 | Worker killed or cut off | The broker publishes the worker's Last Will, which removes its registry claim |
+| Network cut (half-open connection) | Detected by keepalive within 1.5 x 30 s. A worker's unacknowledged QoS 1 messages are sent again after reconnection; a monitor with a clean session loses what was routed to it meanwhile |
 | Two workers with the same id | The later one switches to a random id before creating devices; a conflict found while running stops the later worker, which restarts with a new id |
+
+Measured examples of each case, and how to provoke them: [failures.md](failures.md).
 
 ## The CLI is outside the data path
 
