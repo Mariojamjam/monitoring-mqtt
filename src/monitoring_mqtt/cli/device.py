@@ -16,7 +16,7 @@ from rich.console import Console
 
 from monitoring_mqtt.cli import compose
 from monitoring_mqtt.cli.stack import _project_root, broker_env, load_machine_or_exit
-from monitoring_mqtt.simulator.behavior_config import parse_duration
+from monitoring_mqtt.core.durations import parse_duration
 
 CONTROL_SERVICE = "control"
 ACCEPTED, REJECTED, INVALID, NO_ANSWER, UNREACHABLE = 0, 1, 2, 3, 4

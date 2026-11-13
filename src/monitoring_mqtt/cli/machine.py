@@ -4,8 +4,9 @@ These are deployment settings, not experiment parameters, so they live in the us
 ``.env`` (git-ignored) or in the process environment, which takes precedence like in
 Docker Compose:
 
-- ``STACK_ROLES``: comma-separated subset of ``broker``, ``devices``, ``monitors``
-  (default: all three, the single-machine setup);
+- ``STACK_ROLES``: comma-separated subset of ``broker``, ``devices``, ``monitors``,
+  ``storage`` (PostgreSQL, API and ingestion consumer) and ``alerts`` (alert engine)
+  (default: all of them, the single-machine setup);
 - ``MQTT_BROKER_HOST`` / ``MQTT_BROKER_PORT``: a broker running elsewhere (another
   machine, a tunnel endpoint, ``host.docker.internal``). Empty means the stack's own broker.
   A loopback address (``127.0.0.1``, ``localhost``) means a tunnel listening on this
@@ -13,6 +14,8 @@ Docker Compose:
   service where Docker needs it (see ``cli/dockerhost.py``);
 - ``MQTT_BIND_ADDRESS`` / ``MQTT_HOST_PORT``: where this machine publishes its broker port
   (default ``127.0.0.1:1883``; ``0.0.0.0`` exposes it to the network);
+- ``API_BIND_ADDRESS`` / ``API_HOST_PORT``: where this machine publishes the API
+  (default ``127.0.0.1:8000``);
 - ``NODE_NAME``: label of this machine in worker claims and monitor status (default: the
   hostname where the CLI runs).
 """
@@ -31,7 +34,9 @@ from monitoring_mqtt.core.status import NODE_NAME_MAX_LENGTH
 
 ENV_FILE = ".env"
 BROKER, DEVICES, MONITORS = "broker", "devices", "monitors"
-ROLES = (BROKER, DEVICES, MONITORS)
+STORAGE, ALERTS = "storage", "alerts"
+ROLES = (BROKER, DEVICES, MONITORS, STORAGE, ALERTS)
+API_PORT = 8000
 LOCAL_BROKER_HOST = "broker"  # Compose service name, reachable inside the stack network
 BROKER_PORT = 1883  # port inside the stack network (contract)
 DEFAULT_BIND_ADDRESS = "127.0.0.1"
@@ -82,6 +87,16 @@ class Machine:
     bind_address: str
     host_port: int
     node: str = "unknown"
+    api_bind_address: str = DEFAULT_BIND_ADDRESS
+    api_host_port: int = API_PORT
+
+    @property
+    def api_url(self) -> str:
+        """The API as seen from this machine (the CLI, a browser, curl)."""
+        host = "127.0.0.1" if self.api_bind_address in ("0.0.0.0", "::") else self.api_bind_address
+        if ":" in host:
+            host = f"[{host}]"
+        return f"http://{host}:{self.api_host_port}"
 
     def runs(self, role: str) -> bool:
         return role in self.roles
@@ -153,6 +168,8 @@ class Machine:
             "RELAY_TARGET_HOST": self.broker_host if self.tunnel_on_host else "127.0.0.1",
             "RELAY_PORT": str(self.broker_port),
             "NODE_NAME": self.node,
+            "API_BIND_ADDRESS": self.api_bind_address,
+            "API_HOST_PORT": str(self.api_host_port),
         }
 
 
@@ -193,12 +210,12 @@ def _broker_host(raw: str) -> str | None:
     return host
 
 
-def _bind_address(raw: str) -> str:
+def _bind_address(raw: str, name: str = "MQTT_BIND_ADDRESS") -> str:
     address = raw.strip() or DEFAULT_BIND_ADDRESS
     try:
         ipaddress.ip_address(address)
     except ValueError:
-        raise MachineError(f"MQTT_BIND_ADDRESS={address!r} is not an IP address") from None
+        raise MachineError(f"{name}={address!r} is not an IP address") from None
     return address
 
 
@@ -231,6 +248,8 @@ def machine_from_env(env: Mapping[str, str]) -> Machine:
         bind_address=_bind_address(env.get("MQTT_BIND_ADDRESS", "")),
         host_port=_port(env, "MQTT_HOST_PORT", BROKER_PORT),
         node=_node(env.get("NODE_NAME", "")),
+        api_bind_address=_bind_address(env.get("API_BIND_ADDRESS", ""), "API_BIND_ADDRESS"),
+        api_host_port=_port(env, "API_HOST_PORT", API_PORT),
     )
 
 

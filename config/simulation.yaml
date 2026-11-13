@@ -25,6 +25,15 @@
 #   Every replica is an independent subscriber: the broker delivers its own copy of each
 #   matching message to each one (fan-out), it does not split the load between them.
 #
+# storage   the history: PostgreSQL, the API (http://127.0.0.1:8000, reference /docs) and the
+#           ingestion consumer that posts measurements and alerts to it in batches
+#   enabled         false: none of them runs
+#   batch_size      events per request to the API (1-1000)
+#   flush_interval  send a smaller batch after this long (e.g. 1s, 200ms)
+#   buffer_limit    events kept while the API is down; beyond it, the oldest are dropped
+# alerts    the alert engine: applies the rules to every measurement, publishes alerts
+#   enabled, rules  (file relative to the project, default config/alerts.yaml)
+#
 # behavior  what happens to devices during the run (omit a block to turn it off).
 #   Durations need a unit: 500ms, 30s, 2m, 1h.
 #   anomalies    every: average time between anomalies of one device; lasts: duration;
@@ -80,6 +89,16 @@ monitors:
     replicas: 1
   all:
     replicas: 0
+
+storage:
+  enabled: true
+  batch_size: 500
+  flush_interval: 1s
+  buffer_limit: 50000
+
+alerts:
+  enabled: true
+  rules: config/alerts.yaml
 
 # Normal operation. Example:
 # behavior:
