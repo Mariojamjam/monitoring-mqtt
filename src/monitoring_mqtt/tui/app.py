@@ -182,7 +182,8 @@ class MonitoringApp(App[None]):
         self.query_one("#monitor-detail-box").border_title = "Selected monitor"
         devices = self.query_one("#device-table", DataTable)
         for label in ("", "Device", "Type", "Domain", "Machine", "Worker", "Site", "Value",
-                      "Trend", "Seq", "Msg/s", "Missing", "Last seen", "Consumed by"):  # fmt: skip
+                      "Mode", "Trend", "Seq", "Msg/s", "Missing", "Last seen",
+                      "Consumed by"):  # fmt: skip
             devices.add_column(label, key=label or "state")
         monitors = self.query_one("#monitor-table", DataTable)
         for label in ("", "Client id", "Filter", "Machine", "Msg/s", "Received", "Invalid",
@@ -249,7 +250,8 @@ class MonitoringApp(App[None]):
                 node,
                 device.worker_id,
                 device.site_id,
-                Text(render.value_text(device), style="bold"),
+                render.value_cell(state, device),
+                render.mode_text(state, device.device_id),
                 render.sparkline(list(device.values), 16),
                 str(device.sequence),
                 f"{device.rate(now):.2f}",

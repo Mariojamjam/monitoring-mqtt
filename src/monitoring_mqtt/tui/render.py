@@ -9,6 +9,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
+from monitoring_mqtt.core.simulation import EpisodeKind
 from monitoring_mqtt.core.status import MonitorState, ReceivedMessage
 from monitoring_mqtt.tui.state import (
     UNREGISTERED,
@@ -73,6 +74,33 @@ def duration(seconds: float | None) -> str:
 def value_text(device: DeviceView) -> str:
     unit = f" {device.unit}" if device.unit else ""
     return f"{device.value:g}{unit}"
+
+
+def value_cell(state: SystemState, device: DeviceView) -> Text:
+    """The latest value, red when outside the device type's normal band."""
+    outside = state.out_of_range(device)
+    return Text(value_text(device), style="bold red" if outside else "bold")
+
+
+MODE_STYLE = {
+    EpisodeKind.ANOMALY: "bold red",
+    EpisodeKind.PAUSE: "yellow",
+    EpisodeKind.DELAY: "magenta",
+    EpisodeKind.DISCONNECT: "red",
+    EpisodeKind.STOP: "bright_black",
+}
+ARROWS = {"high": "↑", "low": "↓"}
+
+
+def mode_text(state: SystemState, device_id: str) -> Text:
+    """Simulated episodes in effect (ground truth), e.g. ``stop  anomaly ↑``."""
+    text = Text()
+    for event in state.mode_of(device_id).active:
+        if text:
+            text.append("  ")
+        label = event.kind.value + (f" {ARROWS[event.direction]}" if event.direction else "")
+        text.append(label, style=MODE_STYLE[event.kind])
+    return text or Text("normal", style="dim")
 
 
 def consumers_text(state: SystemState, device: DeviceView) -> Text:
@@ -148,7 +176,11 @@ def publishers(state: SystemState, now: float, show_inactive: bool = True) -> Tr
                     mark = Text("●", style=f"bold {domain_color(device.domain)}")
                 line.append_text(mark)
                 line.append(f" {device.device_id}", style=domain_color(device.domain))
-                line.append(f"  {value_text(device)}", style="bold")
+                line.append("  ")
+                line.append_text(value_cell(state, device))
+                if state.mode_of(device.device_id).active:
+                    line.append("  ")
+                    line.append_text(mode_text(state, device.device_id))
                 line.append(f"  {sparkline(list(device.values), 8)}", style="dim")
                 line.append(f"  seq {device.sequence}", style="dim")
                 if device.missing:
@@ -362,6 +394,14 @@ def monitor_detail(state: SystemState, monitor: MonitorView, now: float) -> Grou
     return Group(head, subscribed, summary, Text(""), table, note)
 
 
+def _band(state: SystemState, device: DeviceView) -> str:
+    band = state.bands.get(device.device_type)
+    if band is None:
+        return "-"
+    unit = f" {device.unit}" if device.unit else ""
+    return f"{band.minimum:g} - {band.maximum:g}{unit}"
+
+
 def device_detail(state: SystemState, device: DeviceView, now: float) -> Group:
     info = Table.grid(padding=(0, 2))
     info.add_column(style="dim")
@@ -374,7 +414,9 @@ def device_detail(state: SystemState, device: DeviceView, now: float) -> Group:
         ("site", device.site_id),
         ("machine / worker", f"{state.node_of(device)} / {device.worker_id}"),
         ("run", device.run_id),
-        ("value", value_text(device)),
+        ("value", value_cell(state, device)),
+        ("normal range", _band(state, device)),
+        ("simulated", mode_text(state, device.device_id)),
         ("history", sparkline(list(device.values))),
         ("sequence", f"{device.sequence} (received {device.received}, missing {device.missing}, "
                      f"duplicates {device.duplicates}, restarts {device.restarts})"),

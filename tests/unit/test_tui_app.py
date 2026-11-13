@@ -127,3 +127,34 @@ def test_sparkline() -> None:
     assert render.sparkline([1, 2, 3]) == "▁▄█"
     assert render.sparkline([5, 5]) == "▁▁"
     assert render.sparkline([]) == ""
+
+
+def test_devices_show_simulated_mode_and_out_of_range_values() -> None:
+    from monitoring_mqtt.core.simulation import EpisodeKind, EpisodePhase, EpisodeSource, SimEvent
+    from monitoring_mqtt.tui.state import Band
+
+    event = SimEvent(
+        run_id="lab-01", worker_id="aaaaaa", device_id="poultry-aaaaaa-001",
+        kind=EpisodeKind.ANOMALY, phase=EpisodePhase.START, source=EpisodeSource.MANUAL,
+        direction="high",
+    )  # fmt: skip
+    items = [*scenario(), telemetry("poultry-aaaaaa-001", 2, E0 + 2, value=40.0),
+             Message(event.topic, event.to_payload(), E0 + 2)]  # fmt: skip
+    feed = FakeFeed(items)
+    state = SystemState(5.0, feed.client_id, {"poultry_type": Band(0.0, 25.0)})
+    app = MonitoringApp(feed, state, "broker:1883", clock=lambda: E0 + 2)
+
+    async def scenario_test() -> None:
+        async with app.run_test(size=(200, 50)) as pilot:
+            await pilot.press("2")
+            await pilot.pause()
+            table = app.query_one("#device-table", DataTable)
+            row = table.get_row("poultry-aaaaaa-001")
+            mode = row[table.get_column_index("Mode")]
+            value = row[table.get_column_index("Value")]
+            assert mode.plain == "anomaly ↑"
+            assert "red" in str(value.style)
+            cattle = table.get_row("cattle-bbbbbb-001")
+            assert cattle[table.get_column_index("Mode")].plain == "normal"
+
+    run(scenario_test())

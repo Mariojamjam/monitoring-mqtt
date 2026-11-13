@@ -6,7 +6,12 @@ it. Sources:
 - telemetry (``monitoring/v1/#``): devices, values, sequence gaps, observed rates;
 - worker registry (``monitoring/registry/v1/workers/+``): workers and their machines;
 - monitor status (``monitoring/status/v1/monitors/+``): who consumes, with counters;
-- broker statistics (``$SYS/broker/#``): clients, message rates, uptime.
+- broker statistics (``$SYS/broker/#``): clients, message rates, uptime;
+- simulation ground truth (``monitoring/sim/v1/devices/+``): episodes in effect per device
+  (anomaly, pause, delay, disconnect, stop), announced by the workers.
+
+The operating range of each device type comes from the device catalog, so values outside
+the normal band can be highlighted.
 
 What each monitor received comes from its own status (``counters.recent``). Which online
 monitors a device's topic is routed to is computed with the broker's filter matching.
@@ -23,6 +28,7 @@ from enum import StrEnum
 
 from monitoring_mqtt.core.models import Measurement
 from monitoring_mqtt.core.registry import REGISTRY_PREFIX, WorkerClaim
+from monitoring_mqtt.core.simulation import SIM_PREFIX, EpisodeKind, EpisodePhase, SimEvent
 from monitoring_mqtt.core.status import (
     STATUS_INTERVAL_SECONDS,
     STATUS_PREFIX,
@@ -78,6 +84,7 @@ class EventKind(StrEnum):
     MONITOR_ONLINE = "monitor online"
     MONITOR_STOPPED = "monitor stopped"
     MONITOR_OFFLINE = "monitor offline"
+    SIMULATED = "simulated"
     BROKER = "broker"
 
 
@@ -136,6 +143,29 @@ class DeviceView:
 
     def rate(self, now: float) -> float:
         return _rate(self.arrivals, now, RATE_WINDOW_SECONDS)
+
+
+@dataclass(frozen=True)
+class Band:
+    """A device type's synthetic normal band (``operating_range`` in the catalog)."""
+
+    minimum: float
+    maximum: float
+
+    def contains(self, value: float) -> bool:
+        return self.minimum <= value <= self.maximum
+
+
+@dataclass
+class Episodes:
+    """Simulated episodes in effect for one device, from the workers' ground truth."""
+
+    value: SimEvent | None = None  # an anomaly
+    availability: SimEvent | None = None  # pause, delay, disconnect or stop
+
+    @property
+    def active(self) -> list[SimEvent]:
+        return [e for e in (self.availability, self.value) if e is not None]
 
 
 @dataclass
@@ -240,9 +270,16 @@ class BrokerView:
 class SystemState:
     """Aggregated view of the system; mutated only by ``apply`` (single thread)."""
 
-    def __init__(self, publish_interval: float = 5.0, observer_id: str = "") -> None:
+    def __init__(
+        self,
+        publish_interval: float = 5.0,
+        observer_id: str = "",
+        bands: dict[str, Band] | None = None,
+    ) -> None:
         self.publish_interval = publish_interval
         self.observer_id = observer_id
+        self.bands = bands or {}  # device type → operating range
+        self.episodes: dict[str, Episodes] = {}  # device id → simulated episodes
         self.devices: dict[str, DeviceView] = {}
         self.workers: dict[str, WorkerView] = {}
         self.monitors: dict[str, MonitorView] = {}
@@ -268,6 +305,8 @@ class SystemState:
             self._claim(item)
         elif item.topic.startswith(f"{STATUS_PREFIX}/monitors/"):
             self._status(item)
+        elif item.topic.startswith(f"{SIM_PREFIX}/devices/"):
+            self._simulated(item)
         elif item.topic.startswith(SYS_PREFIX):
             self.broker.values[item.topic[len(SYS_PREFIX) :]] = item.payload.decode(
                 "utf-8", errors="replace"
@@ -356,6 +395,28 @@ class SystemState:
             f"seq {m.sequence}  {m.metric} = {m.value:g}{unit}", domain=m.domain, payload=payload,
         )  # fmt: skip
 
+    def _simulated(self, item: Message) -> None:
+        try:
+            event = SimEvent.from_payload(item.payload)
+        except ValueError:
+            return
+        episodes = self.episodes.setdefault(event.device_id, Episodes())
+        slot = "value" if event.kind is EpisodeKind.ANOMALY else "availability"
+        if event.phase is EpisodePhase.START:
+            setattr(episodes, slot, event)
+        elif (current := getattr(episodes, slot)) is not None and current.kind is event.kind:
+            setattr(episodes, slot, None)
+        what = event.kind.value + (f" {event.direction}" if event.direction else "")
+        detail = f"{what} {'started' if event.phase is EpisodePhase.START else 'ended'}"
+        detail += f" ({event.source.value}"
+        if event.phase is EpisodePhase.START and event.until is not None:
+            detail += f", {(event.until - event.at).total_seconds():.0f} s"
+        detail += ")"
+        self._event(
+            item.received_at, EventKind.SIMULATED, event.device_id, detail,
+            payload=_pretty(item.payload),
+        )  # fmt: skip
+
     def _claim(self, item: Message) -> None:
         worker_id = item.topic.rsplit("/", 1)[-1]
         known = self.workers.get(worker_id)
@@ -363,6 +424,10 @@ class SystemState:
             if known and known.present:
                 known.present, known.changed_at = False, item.received_at
                 self._event(item.received_at, EventKind.WORKER_LEFT, worker_id, "claim removed")
+                # Its devices are gone: their simulated episodes ended with them.
+                for device_id, episodes in self.episodes.items():
+                    if any(e.worker_id == worker_id for e in episodes.active):
+                        self.episodes[device_id] = Episodes()
             return
         try:
             claim = WorkerClaim.from_payload(item.payload)
@@ -409,6 +474,14 @@ class SystemState:
         self.monitors[client_id] = MonitorView(status, status.state, item.received_at, rate)
 
     # Queries -------------------------------------------------------------------------
+
+    def mode_of(self, device_id: str) -> Episodes:
+        return self.episodes.get(device_id) or Episodes()
+
+    def out_of_range(self, device: DeviceView) -> bool | None:
+        """Whether the latest value is outside the normal band (None: no band known)."""
+        band = self.bands.get(device.device_type)
+        return None if band is None else not band.contains(device.value)
 
     def device_health(self, device: DeviceView, now: float) -> Health:
         if now - device.last_seen <= STALE_INTERVALS * self.publish_interval:
