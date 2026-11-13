@@ -19,7 +19,7 @@ only some roles applies the same experiment with the other services at 0 replica
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -28,6 +28,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from monitoring_mqtt.core.topics import ALL_TELEMETRY_FILTER, domain_filter
+from monitoring_mqtt.simulator.behavior_config import BehaviorConfig
 from monitoring_mqtt.simulator.catalog import CatalogError, DeviceCatalog, load_catalog
 
 SIMULATION_FILE = Path("config/simulation.yaml")
@@ -99,6 +100,7 @@ class SimulationFile(_Section):
     devices: DevicesSection = Field(default_factory=DevicesSection)
     workers: dict[str, WorkerGroup]
     monitors: dict[str, MonitorGroup] = Field(default_factory=dict)
+    behavior: BehaviorConfig = Field(default_factory=BehaviorConfig)
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,7 @@ class Simulation:
     mqtt: MqttSection
     devices: DevicesSection
     plan: StackPlan
+    behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     source: Path = SIMULATION_FILE  # shown to the user; relative to the project when possible
 
 
@@ -222,6 +225,25 @@ def build_monitor_plan(topology: SimulationFile, catalog: DeviceCatalog) -> list
     ]
 
 
+def check_behavior(behavior: BehaviorConfig, catalog: DeviceCatalog) -> None:
+    """Device types named in the behaviour must exist and support what is asked."""
+    known = {t.name: t for t in catalog.device_types}
+    unknown = sorted(behavior.device_types() - set(known))
+    if unknown:
+        raise SimulationError(
+            f"behavior: unknown device type(s) {unknown}; valid types: {sorted(known)}"
+        )
+    anomalies = behavior.anomalies
+    if anomalies is None:
+        return
+    names = anomalies.only or list(known)
+    if not any(known[name].anomaly for name in names):
+        raise SimulationError(
+            "behavior.anomalies: none of these device types defines anomaly targets "
+            "(anomaly: {low, high} in config/devices.yaml)"
+        )
+
+
 def simulation_path(project_root: Path, config: Path | None = None) -> Path:
     """The experiment file: ``config`` (relative to the working directory) or the default."""
     return config.expanduser().resolve() if config else project_root / SIMULATION_FILE
@@ -245,11 +267,13 @@ def load_simulation(project_root: Path, config: Path | None = None) -> Simulatio
     except CatalogError as exc:
         raise SimulationError(str(exc)) from exc
     plan = StackPlan(build_plan(sim, catalog), build_monitor_plan(sim, catalog))
+    check_behavior(sim.behavior, catalog)
     return Simulation(
         run=sim.run,
         mqtt=sim.mqtt,
         devices=sim.devices,
         plan=plan,
+        behavior=sim.behavior,
         source=_display_path(project_root, path),
     )
 
@@ -299,6 +323,7 @@ def compose_env(sim: Simulation, run_id: str) -> dict[str, str]:
         "RUN_ID": run_id,
         "SIMULATION_SEED": str(sim.run.seed),
         "PUBLISH_INTERVAL_SECONDS": _number(sim.devices.publish_interval_seconds),
+        "SIMULATION_BEHAVIOR": sim.behavior.to_env(),
     }
     for worker in sim.plan.workers:
         env[f"{worker.env_prefix}_REPLICAS"] = str(worker.replicas)

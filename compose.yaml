@@ -37,6 +37,8 @@ x-simulation-env: &simulation-env
   RUN_ID: ${RUN_ID:-}
   PUBLISH_INTERVAL_SECONDS: ${PUBLISH_INTERVAL_SECONDS:-5}
   SIMULATION_SEED: ${SIMULATION_SEED:-42}
+  # The experiment's `behavior` section as JSON (anomalies, instability, faults); empty = none.
+  SIMULATION_BEHAVIOR: ${SIMULATION_BEHAVIOR:-}
 
 # Device workers: one service per device type, named device-{domain}.
 # Replicas (N) and devices per container (M) come from config/simulation.yaml, applied by

@@ -33,6 +33,7 @@ from monitoring_mqtt.cli.simulation import (
 )
 from monitoring_mqtt.core.identity import host_short_id
 from monitoring_mqtt.core.registry import WorkerClaim
+from monitoring_mqtt.simulator.behavior_config import human_duration
 
 BROKER_SERVICE = "broker"
 RELAY_SERVICE = "broker-relay"
@@ -304,6 +305,12 @@ def print_experiment(
     table.add_row("seed", str(sim.run.seed))
     table.add_row("log level", sim.run.log_level)
     table.add_row("publish interval", f"{sim.devices.publish_interval_seconds:g} s")
+    table.add_row("behaviour", sim.behavior.describe())
+    for fault in sim.behavior.faults:
+        lasts = f" for {human_duration(fault.lasts)}" if fault.lasts else " until the end"
+        table.add_row(
+            "  fault", f"{fault.action.value} {fault.device} at {human_duration(fault.at)}{lasts}"
+        )
     table.add_row("MQTT QoS", str(mqtt.qos))
     table.add_row("MQTT keepalive", f"{mqtt.keepalive_seconds} s")
     table.add_row("MQTT clean session", str(mqtt.clean_session).lower())
@@ -433,12 +440,6 @@ def down(ctx: typer.Context) -> None:
 
 
 @app.command()
-def status(ctx: typer.Context) -> None:
-    """Show the status of the stack services."""
-    _compose(ctx, "ps", "--all")
-
-
-@app.command()
 def restart(
     ctx: typer.Context,
     services: Annotated[
@@ -458,6 +459,12 @@ def restart(
     if timeout is not None:
         args += ["--timeout", str(timeout)]
     _compose(ctx, *args, *(services or []))
+
+
+@app.command()
+def status(ctx: typer.Context) -> None:
+    """Show the status of the stack services."""
+    _compose(ctx, "ps", "--all")
 
 
 @app.command()

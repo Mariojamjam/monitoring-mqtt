@@ -1,0 +1,19 @@
+# Two devices of each type; every device has an anomaly about once a minute, lasting 30 s:
+# its values leave the operating range (config/devices.yaml) and come back gradually.
+# Workers announce each anomaly on monitoring/sim/v1/devices/{device_id} (ground truth).
+#
+#   monitoring-mqtt stack up -c config/examples/anomalies.yaml
+schema_version: 1
+
+workers:
+  dissolved_oxygen_probe: {replicas: 1, devices_per_worker: 2}
+  ammonia_detector: {replicas: 1, devices_per_worker: 2}
+  rumen_ph_bolus: {replicas: 1, devices_per_worker: 2}
+
+monitors:
+  all: {replicas: 1}
+
+behavior:
+  anomalies:
+    every: 1m
+    lasts: 30s
