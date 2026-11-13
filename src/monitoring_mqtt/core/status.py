@@ -94,6 +94,29 @@ class MonitorCounters(_Model):
     recent: Annotated[list[ReceivedMessage], Field(max_length=RECENT_MESSAGES)] = []
 
 
+class DeliveryCounters(_Model):
+    """Consumers that hand events to the API (ingestion): where the events went."""
+
+    api_url: NonEmpty
+    buffered: Count  # received, not yet stored
+    dropped: Count  # oldest events dropped because the buffer was full
+    batches: Count  # batches the API answered
+    stored: Count
+    duplicates: Count
+    rejected: Count  # invalid items refused by the API
+    api_errors: Count  # failed attempts (retried)
+    last_delivery_at: AwareDatetime | None = None
+
+
+class AlertCounters(_Model):
+    """The alert engine: alerts it raised and how many are open now."""
+
+    open: Count
+    raised: Count
+    cleared: Count
+    open_by_severity: dict[str, Count]
+
+
 class MonitorStatus(_Model):
     """Status of one monitor connection (schema version 1)."""
 
@@ -107,6 +130,8 @@ class MonitorStatus(_Model):
     started_at: AwareDatetime
     updated_at: AwareDatetime
     counters: MonitorCounters | None = None  # None in the Last Will (offline)
+    delivery: DeliveryCounters | None = None  # consumers that store events (ingestion)
+    alerts: AlertCounters | None = None  # the alert engine
 
     @field_validator("started_at", "updated_at")
     @classmethod
