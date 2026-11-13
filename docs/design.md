@@ -48,12 +48,12 @@ flowchart LR
   MON -- "MQTT PUBLISH<br/>status (retained, Last Will)" --> BROKER
   BROKER -- "MQTT deliver<br/>telemetry, claims, status, $SYS" --> TUI
 
-  BROKER -. "MQTT deliver<br/>telemetry" .-> PER
-  BROKER -. "MQTT deliver<br/>telemetry" .-> ALR
-  ALR -. "MQTT PUBLISH<br/>alerts" .-> BROKER
-  BROKER -. "MQTT deliver<br/>alerts" .-> PER
-  PER -. "HTTP POST JSON<br/>batches of events" .-> API
-  API -. "SQL INSERT idempotent<br/>SQL SELECT" .-> DB
+  BROKER -- "MQTT deliver<br/>telemetry (persistent session)" --> PER
+  BROKER -- "MQTT deliver<br/>telemetry (persistent session)" --> ALR
+  ALR -- "MQTT PUBLISH<br/>alert events + active state (retained)" --> BROKER
+  BROKER -- "MQTT deliver<br/>alert events" --> PER
+  PER -- "HTTP POST JSON<br/>batches of events" --> API
+  API -- "SQL INSERT idempotent<br/>SQL SELECT" --> DB
   ST -. "HTTP GET JSON<br/>polling" .-> API
 
   CLI -- "docker compose<br/>argv, env" --> DOCKER
@@ -66,8 +66,8 @@ The map has three kinds of communication:
 | Kind | Style | Used for |
 |---|---|---|
 | **MQTT publish/subscribe** | Asynchronous push through the broker; many-to-many; senders and receivers are decoupled | Everything that happens *now*: telemetry, presence, coordination, alerts |
-| **HTTP/REST** (planned) | Synchronous request/response | Handing events over to storage (POST) and asking about the *past*: history, alerts, experiment results (GET) |
-| **SQL** (planned) | Used only by the API | Durable storage; the API is the single owner of the database |
+| **HTTP/REST** | Synchronous request/response | Handing events over to storage (POST) and asking about the *past*: history, alerts, experiment results (GET) |
+| **SQL** | Used only by the API | Durable storage; the API is the single owner of the database |
 
 The CLI and Docker Compose form a fourth path, the **control plane**: they start, stop
 and scale containers. They are never in the data path, and the stack keeps running
@@ -84,12 +84,12 @@ without the CLI.
 | Broker | Monitors | MQTT delivery | Telemetry matching each monitor's filter, e.g. `monitoring/v1/poultry/#` | implemented |
 | Monitor | Broker | MQTT retained + Last Will | `monitoring/status/v1/monitors/{client_id}`: filter, counters, last messages received | implemented |
 | Broker | TUI | MQTT delivery | Telemetry, worker claims, monitor status, simulation ground truth, `$SYS` broker statistics | implemented |
-| Broker | Ingestion consumer | MQTT delivery | All telemetry (`monitoring/v1/#`) and alerts | planned |
-| Ingestion consumer | FastAPI | HTTP POST, JSON | Batches of measurements and alerts to store | planned |
-| FastAPI | PostgreSQL | SQL (write) | Measurements and alerts; duplicates dropped by `event_id` | planned |
-| Broker | Alert engine | MQTT delivery | Telemetry to check against rules | planned |
-| Alert engine | Broker | MQTT PUBLISH | `alerts/v1/{domain}/{severity}`: derived event that references the measurement | planned |
-| FastAPI | PostgreSQL | SQL (read) | Devices, measurements, alerts, experiment metrics | planned |
+| Broker | Ingestion consumer | MQTT delivery, persistent session | All telemetry (`monitoring/v1/#`) and alert events (`monitoring/alerts/v1/events/#`) | implemented |
+| Ingestion consumer | FastAPI | HTTP POST, JSON | Batches of measurements and alerts to store (`/ingest/...`) | implemented |
+| FastAPI | PostgreSQL | SQL (write) | Measurements and alerts; duplicates dropped by `event_id` / alert transition | implemented |
+| Broker | Alert engine | MQTT delivery, persistent session | Telemetry to check against rules | implemented |
+| Alert engine | Broker | MQTT PUBLISH | `monitoring/alerts/v1/events/{domain}/{severity}/{device_id}`: derived event that references the measurement; `…/active/{device_id}/{rule_id}` retained | implemented |
+| FastAPI | PostgreSQL | SQL (read) | Devices, measurements, series, alerts, runs | implemented |
 | Streamlit | FastAPI | HTTP GET, JSON | Query results for charts and tables | planned |
 | CLI | Docker Compose | Process call | Service list, replicas and experiment variables | implemented |
 
@@ -102,10 +102,10 @@ without the CLI.
 | Broker | `broker` | Mosquitto (no project code) | Routes messages by topic; keeps retained messages; runs Last Wills | implemented |
 | Monitor | `monitor-{kind}` (N replicas) | `consumers.monitor` | Subscribes to a filter, validates, counts, reports its status | implemented |
 | TUI | `tui` (one-off) | `tui` | Shows who publishes, the broker and what each consumer received | implemented |
-| Ingestion consumer | `ingestion` | `consumers.ingestion` | Subscribes to telemetry and alerts and hands them to the API in batches; never touches the database | planned |
-| Alert engine | `alerts` | `consumers.alerts` | Applies threshold rules and publishes alert events | planned |
-| Database | `postgres` | PostgreSQL + SQLAlchemy/Alembic | Durable history, owned by the API | planned |
-| API | `api` | `api` (FastAPI) | Single entry point to the database: receives events to store and answers queries | planned |
+| Ingestion consumer | `ingestion` | `consumers.ingestion` | Subscribes to telemetry and alerts and hands them to the API in batches; never touches the database | implemented |
+| Alert engine | `alerts` | `consumers.alerts` | Applies threshold rules and publishes alert events | implemented |
+| Database | `postgres` | PostgreSQL + SQLAlchemy/Alembic | Durable history, owned by the API | implemented |
+| API | `api` | `api` (FastAPI) | Single entry point to the database: receives events to store and answers queries | implemented |
 | Dashboard | `dashboard` | `dashboard` (Streamlit) | Historical charts and experiment comparison | planned |
 | CLI | host or Dev Container | `cli` | Applies the experiment and machine settings to Compose | implemented |
 | Relay | `broker-relay` (optional) | `tools.relay` | Lets containers reach a broker tunnel on the host's loopback | implemented |
@@ -129,7 +129,7 @@ independently.
 - **Why MQTT.** Lightweight, designed for many small devices, topic-based filtering in
   the broker, and no direct link between producers and consumers.
 
-### HTTP/REST: the API owns the data (planned)
+### HTTP/REST: the API owns the data
 
 - **FastAPI is the only component that talks to the database.** Everything that is stored
   enters through it, and everything that is read leaves through it, so the schema, the
@@ -139,10 +139,10 @@ independently.
   list. The API validates each event against the same contract as the monitors and stores
   it once (see SQL below). Batches keep the number of HTTP requests low when hundreds of
   devices publish.
-- **Read side.** JSON queries over the history, for example `GET /devices`,
-  `GET /measurements?device_id=…&from=…&to=…`, `GET /alerts`,
-  `GET /experiments/{run_id}/metrics`, plus `GET /health`. The API publishes an OpenAPI
-  description of its endpoints.
+- **Read side.** JSON queries over the history: `GET /devices`,
+  `GET /measurements?device_id=…&from=…&to=…`, `GET /measurements/series`, `GET /alerts`,
+  `GET /runs`, `GET /stats`, plus `GET /health` and `GET /ready`. The API publishes its
+  OpenAPI description, with a Scalar reference at `/docs` ([api.md](api.md)).
 - **Why a bridge instead of letting the API subscribe.** The API stays a plain HTTP
   service that can be restarted, scaled or tested without the broker, and the MQTT side
   stays in the consumers. The bridge is the only place where the two worlds meet.
@@ -166,11 +166,12 @@ independently.
   happens now. Streamlit pulls stored data and shows what happened. Together they show
   both communication styles of the system.
 
-### SQL: storage behind the API (planned)
+### SQL: storage behind the API
 
 - Only the API opens database connections (SQLAlchemy, schema migrations with Alembic).
-- Tables: `devices`, `measurements` (unique `event_id`), `alerts`, `experiment_runs`,
-  `experiment_metrics`. Event time, reception time and storage time are kept apart.
+- Tables: `runs`, `devices`, `measurements` (unique `event_id`), `alerts`
+  ([storage.md](storage.md)); experiment metrics come with the experiment runner. Event
+  time, reception time and storage time are kept apart.
 - `INSERT … ON CONFLICT (event_id) DO NOTHING` makes storage idempotent: an event that
   arrives twice (QoS 1 duplicate, or a batch retried after a timeout) becomes one row.
 
@@ -192,7 +193,7 @@ sequenceDiagram
   B->>T: deliver status: what monitor-poultry received
 ```
 
-**Storage and history** (planned)
+**Storage and history** (implemented; Streamlit planned)
 
 ```mermaid
 sequenceDiagram
@@ -215,7 +216,7 @@ sequenceDiagram
   end
 ```
 
-**Alerts** (planned)
+**Alerts** (implemented)
 
 ```mermaid
 sequenceDiagram
@@ -226,7 +227,8 @@ sequenceDiagram
   participant DB as PostgreSQL
   B->>AL: deliver measurement
   AL->>AL: value outside the rule's range?
-  AL->>B: PUBLISH alerts/v1/poultry/warning (references event_id)
+  AL->>B: PUBLISH monitoring/alerts/v1/events/poultry/warning/{device} (references event_id)
+  AL->>B: PUBLISH monitoring/alerts/v1/active/{device}/{rule} (retained)
   B->>I: deliver alert
   I->>A: POST /ingest/alerts
   A->>DB: INSERT alert
@@ -243,10 +245,10 @@ flowchart TB
     dev["device-aquaculture / poultry / cattle<br/>simulator"]
     mon["monitor-aquaculture / poultry / cattle / all<br/>consumers.monitor"]
     tools["tui · smoke · workers · broker-relay<br/>tui, testing, tools"]
-    pl["ingestion · alerts · dashboard<br/>(planned)"]
-    api["api<br/>(planned)"]
+    pl["ingestion · alerts<br/>consumers.ingestion, consumers.alerts<br/>dashboard (planned)"]
+    api["api<br/>storage (only user)"]
   end
-  pg[("postgres<br/>(planned, volume)")]
+  pg[("postgres<br/>(volume pgdata)")]
   core["monitoring_mqtt.core<br/>topics · payloads · registry · status · MQTT client"]
   dev --> core
   mon --> core
@@ -262,7 +264,7 @@ flowchart TB
 - **Module rule:** `core` depends on nothing in the project; `simulator`, `consumers`,
   `tui` and `tools` depend only on `core`, never on each other; the CLI is the only part
   that knows about Docker.
-- **Ports on the host** (loopback by default): broker `1883`; planned API `8000` and
+- **Ports on the host** (loopback by default): broker `1883`, API `8000`; planned
   dashboard `8501`.
 
 ## 8. Orchestration
@@ -276,7 +278,8 @@ flowchart TB
   `workers`) run under the `tools` profile.
 - **Several machines.** `STACK_ROLES` splits the stack, for example the broker on a
   Raspberry Pi and devices on other computers ([distributed.md](distributed.md)). The
-  planned storage and dashboard services would join the same scheme as extra roles.
+  storage (PostgreSQL, API, ingestion) and the alert engine are the roles `storage` and
+  `alerts`; the planned dashboard would join the same scheme.
 
 ## 9. Guarantees and limits
 

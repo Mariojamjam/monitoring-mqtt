@@ -18,6 +18,7 @@ Follow any scenario live with `monitoring-mqtt tui` in another terminal (see
 | [Worker stops or crashes](#worker-stops-or-crashes) | `docker stop` / `docker kill monitoring-mqtt-device-poultry-1` | The broker | Immediate | All its devices stop; `sequence` restarts at 1 when it comes back |
 | [Broker restarts](#broker-restarts) | `monitoring-mqtt stack restart broker` | Every client | Immediate | About 1 s without a broker; a measurement due in that second is dropped |
 | [Network cut](#network-cut-half-open-connection) (cable, Wi-Fi, firewall) | `docker network disconnect monitoring-mqtt_default <container>` | Keepalive | Up to 1.5 x keepalive (45 s) | Worker: buffered and delivered late. Monitor: messages lost |
+| [API, database or ingestion down](#storage-path-api-database-ingestion-consumer) | `docker stop monitoring-mqtt-api-1` | The ingestion consumer (failed requests, 503) | Immediate | Buffered or queued by the broker; stored without gaps when it returns |
 | [One device inside a worker](#one-device-inside-a-worker) | `monitoring-mqtt device stop <device_id> --for 30s` | Its own clean disconnect | Immediate | Only that device: silence, no gap. Its neighbours keep publishing |
 
 ## Monitor stops or crashes
@@ -111,6 +112,30 @@ Why the two sides differ:
 
 The old TCP connection does not recover even when the network comes back quickly. The
 client still has to time out and reconnect.
+
+## Storage path: API, database, ingestion consumer
+
+```bash
+docker stop monitoring-mqtt-api-1        # or -postgres-1, -ingestion-1
+docker start monitoring-mqtt-api-1
+```
+
+Default experiment, each stopped for 30 s (three devices, 18 measurements expected):
+
+| Stopped | What keeps the events | Stored | Gaps | Longest delay to the database |
+|---|---|---|---|---|
+| `api` | the ingestion consumer's buffer (retries with backoff) | 21 | 0 | 34.8 s |
+| `postgres` | the same buffer: the API answers 503 meanwhile | 18 | 0 | 28.1 s |
+| `ingestion` | the broker: persistent session, queued QoS 1 messages | 18 | 0 | 31.1 s |
+
+Everything published during the outage was stored, in order, within 4 s of the restart.
+An unplanned 5-minute API outage (189 measurements buffered) ended the same way: no gap.
+Devices, monitors and the alert engine were not affected by any of them. Limits: what the
+ingestion buffer holds is lost if its process dies, and the broker queues at most 1000
+messages per consumer. Details in [storage.md](storage.md).
+
+Use `docker stop/start` on the container here. `docker compose start <service>` would also
+start the service's dependencies, such as `migrate`.
 
 ## Restart policy
 
