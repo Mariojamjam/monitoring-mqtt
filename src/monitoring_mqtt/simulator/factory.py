@@ -6,24 +6,49 @@ from collections import Counter
 from collections.abc import Callable
 
 from monitoring_mqtt.core.config import MqttSettings
-from monitoring_mqtt.simulator.catalog import DeviceCatalog, DeviceType, GeneratorSpec
+from monitoring_mqtt.simulator.catalog import (
+    BoundedNoiseSpec,
+    DeviceCatalog,
+    DeviceType,
+    GeneratorSpec,
+)
 from monitoring_mqtt.simulator.device import DeviceProfile, VirtualDevice
 from monitoring_mqtt.simulator.generators.base import (
     BoundedNoiseGenerator,
+    MeanRevertingGenerator,
     MeasurementGenerator,
     seeded_rng,
 )
 from monitoring_mqtt.simulator.identity import device_id
 
 
+def device_mean(spec: GeneratorSpec, seed: int, dev_id: str) -> float:
+    """The mean of one device: the type's mean shifted by up to ``site_spread``."""
+    if isinstance(spec, BoundedNoiseSpec) or spec.site_spread == 0:
+        return spec.mean
+    offset = seeded_rng(seed, dev_id, "site").uniform(-spec.site_spread, spec.site_spread)
+    return round(spec.mean + offset, spec.decimals)
+
+
 def build_generator(spec: GeneratorSpec, seed: int, dev_id: str) -> MeasurementGenerator:
     """Create the generator for one device; its random stream depends on seed + device id."""
-    return BoundedNoiseGenerator(
-        center=spec.center,
+    rng = seeded_rng(seed, dev_id)
+    if isinstance(spec, BoundedNoiseSpec):
+        return BoundedNoiseGenerator(
+            center=spec.center,
+            noise=spec.noise,
+            minimum=spec.minimum,
+            maximum=spec.maximum,
+            rng=rng,
+            decimals=spec.decimals,
+        )
+    return MeanRevertingGenerator(
+        mean=device_mean(spec, seed, dev_id),
+        alpha=spec.alpha,
         noise=spec.noise,
         minimum=spec.minimum,
         maximum=spec.maximum,
-        rng=seeded_rng(seed, dev_id),
+        rng=rng,
         decimals=spec.decimals,
     )
 

@@ -10,26 +10,35 @@ x-app: &app
   restart: unless-stopped
   depends_on:
     # Startup convenience only: clients also reconnect if the broker restarts later.
+    # Machines that use a remote broker start their services with --no-deps.
     broker:
       condition: service_healthy
+  extra_hosts:
+    # Lets services reach a broker or tunnel endpoint published on this machine's ports.
+    - "host.docker.internal:host-gateway"
 
 # Experiment parameters come from config/simulation.yaml: `monitoring-mqtt stack up` passes
 # them as the variables below. The defaults match the default experiment, so a plain
-# `docker compose up` also works. Host and port are fixed by the stack (contract).
+# `docker compose up` also works. The broker address is a machine setting (.env):
+# empty MQTT_BROKER_HOST means the stack's own broker service.
 x-mqtt-env: &mqtt-env
-  MQTT_HOST: broker
-  MQTT_PORT: "1883"
+  MQTT_HOST: ${MQTT_BROKER_HOST:-broker}
+  MQTT_PORT: ${MQTT_BROKER_PORT:-1883}
   MQTT_QOS: ${MQTT_QOS:-1}
   MQTT_KEEPALIVE: ${MQTT_KEEPALIVE:-30}
   MQTT_CLEAN_SESSION: ${MQTT_CLEAN_SESSION:-true}
   MQTT_RECONNECT_MIN_DELAY_SECONDS: ${MQTT_RECONNECT_MIN_DELAY_SECONDS:-1}
   MQTT_RECONNECT_MAX_DELAY_SECONDS: ${MQTT_RECONNECT_MAX_DELAY_SECONDS:-30}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # Machine label shown by observers (worker claims, monitor status); set by the CLI.
+  NODE_NAME: ${NODE_NAME:-}
 
 x-simulation-env: &simulation-env
   RUN_ID: ${RUN_ID:-}
   PUBLISH_INTERVAL_SECONDS: ${PUBLISH_INTERVAL_SECONDS:-5}
   SIMULATION_SEED: ${SIMULATION_SEED:-42}
+  # The experiment's `behavior` section as JSON (anomalies, instability, faults); empty = none.
+  SIMULATION_BEHAVIOR: ${SIMULATION_BEHAVIOR:-}
 
 # Device workers: one service per device type, named device-{domain}.
 # Replicas (N) and devices per container (M) come from config/simulation.yaml, applied by
@@ -56,9 +65,13 @@ services:
       context: infra/mosquitto
     image: monitoring-mqtt/mosquitto:local
     restart: unless-stopped
+    deploy:
+      # 0 on machines whose STACK_ROLES exclude the broker (they use a remote one).
+      replicas: ${BROKER_REPLICAS:-1}
     ports:
-      # Host access restricted to loopback; services use broker:1883 internally.
-      - "127.0.0.1:${MQTT_HOST_PORT:-1883}:1883"
+      # Loopback only by default; MQTT_BIND_ADDRESS=0.0.0.0 (.env) exposes the broker to
+      # other machines. Services in this stack always use broker:1883 internally.
+      - "${MQTT_BIND_ADDRESS:-127.0.0.1}:${MQTT_HOST_PORT:-1883}:1883"
     healthcheck:
       # Retained $SYS topics answer immediately once the broker accepts connections.
       test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$$SYS/broker/version", "-C", "1", "-W", "3"]
@@ -136,6 +149,27 @@ services:
       MONITOR_NAME: all
       MQTT_TOPIC_FILTER: monitoring/v1/#
 
+  # Forwards host.docker.internal:<port> to a tunnel listening on this machine's loopback
+  # (MQTT_BROKER_HOST=127.0.0.1). Only needed with Docker Engine on Linux, where containers
+  # cannot reach the host's loopback; `stack up` sets the replicas and the listen address
+  # (the bridge gateway, which host.docker.internal points to). It never listens on the
+  # machine's network interfaces.
+  broker-relay:
+    build:
+      context: .
+    image: monitoring-mqtt/app:local
+    restart: unless-stopped
+    network_mode: host
+    deploy:
+      replicas: ${BROKER_RELAY_REPLICAS:-0}
+    command: ["python", "-m", "monitoring_mqtt.tools.relay"]
+    environment:
+      RELAY_LISTEN_HOST: ${RELAY_LISTEN_HOST:-}
+      RELAY_LISTEN_PORT: ${RELAY_PORT:-1883}
+      RELAY_TARGET_HOST: ${RELAY_TARGET_HOST:-127.0.0.1}
+      RELAY_TARGET_PORT: ${RELAY_PORT:-1883}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
   # One-off end-to-end check, run by `monitoring-mqtt test smoke` (docker compose run).
   # The `tools` profile keeps it out of `stack up`.
   smoke:
@@ -150,3 +184,46 @@ services:
       # Machine tolerance (.env); the telemetry window is derived from the experiment by the CLI.
       SMOKE_TIMEOUT_SECONDS: ${SMOKE_TIMEOUT_SECONDS:-10}
       SMOKE_TELEMETRY_WINDOW_SECONDS: ${SMOKE_TELEMETRY_WINDOW_SECONDS:-15}
+      # false when this machine runs no devices (they may run elsewhere): telemetry is reported only.
+      SMOKE_REQUIRE_TELEMETRY: ${SMOKE_REQUIRE_TELEMETRY:-true}
+
+  # Read-only terminal UI, run by `monitoring-mqtt tui` (interactive, one-off). It observes
+  # the system only through the broker, like any other subscriber.
+  tui:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    stdin_open: true
+    tty: true
+    command: ["python", "-m", "monitoring_mqtt.tui"]
+    environment:
+      <<: *mqtt-env
+      MQTT_CLEAN_SESSION: "true"
+      PUBLISH_INTERVAL_SECONDS: ${PUBLISH_INTERVAL_SECONDS:-5}
+      TUI_BROKER_LABEL: ${TUI_BROKER_LABEL:-}
+      TERM: ${TERM:-xterm-256color}
+      COLORTERM: ${COLORTERM:-truecolor}
+
+  # One-off listing of the workers registered in the broker, run by
+  # `monitoring-mqtt stack workers`. Sees workers on every machine using this broker.
+  workers:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    command: ["python", "-m", "monitoring_mqtt.tools.workers"]
+    environment:
+      <<: *mqtt-env
+      MQTT_CLEAN_SESSION: "true"
+      SMOKE_TIMEOUT_SECONDS: ${SMOKE_TIMEOUT_SECONDS:-10}
+
+  # One-off live command to one device, run by `monitoring-mqtt device ...`. The worker
+  # hosting the device acknowledges it through the broker.
+  control:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    entrypoint: ["python", "-m", "monitoring_mqtt.tools.control"]
+    environment:
+      <<: *mqtt-env
+      MQTT_CLEAN_SESSION: "true"
+      CONTROL_TIMEOUT_SECONDS: ${CONTROL_TIMEOUT_SECONDS:-5}

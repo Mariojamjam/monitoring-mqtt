@@ -15,6 +15,8 @@ TELEMETRY_ROOT = "monitoring"
 TELEMETRY_VERSION = "v1"
 TELEMETRY_PREFIX = f"{TELEMETRY_ROOT}/{TELEMETRY_VERSION}"
 ALL_TELEMETRY_FILTER = f"{TELEMETRY_PREFIX}/#"
+# Reserved for `monitoring-mqtt test smoke` probes; no monitor subscribes to it.
+SMOKE_DOMAIN = "smoke"
 
 # Lowercase identifiers; no MQTT separators or wildcards inside a segment.
 SEGMENT_PATTERN = r"^[a-z0-9][a-z0-9_-]*$"

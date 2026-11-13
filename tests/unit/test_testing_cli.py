@@ -42,6 +42,19 @@ def test_unit_passes_args_to_pytest_and_preserves_exit_code(project: Path, monke
     assert seen["cwd"] == project.resolve()
 
 
+def test_integration_runs_its_own_suite(project: Path, monkeypatch) -> None:
+    seen = {}
+
+    def fake_run(command, cwd, check):
+        seen.update(command=command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(testing.subprocess, "run", fake_run)
+    assert invoke(project, "integration", "-k", "recovery").exit_code == 0
+    assert seen["command"] == ["uv", "run", "--frozen", "pytest", "tests/integration", "-k",
+                               "recovery"]  # fmt: skip
+
+
 def test_unit_without_uv_exits_127(project: Path, monkeypatch) -> None:
     def missing(command, cwd, check):
         raise FileNotFoundError("uv")
@@ -100,3 +113,22 @@ def test_smoke_refuses_when_stack_is_down(smoke_project: Path, monkeypatch) -> N
     monkeypatch.setattr(compose.subprocess, "run", fake)
     assert invoke(smoke_project, "smoke").exit_code == 1
     assert len(fake.calls) == 1  # only the status check; no container started
+
+
+def test_smoke_against_remote_broker(smoke_project: Path, monkeypatch) -> None:
+    (smoke_project / ".env").write_text("STACK_ROLES=monitors\nMQTT_BROKER_HOST=pi.local\n")
+    fake = FakeCompose(broker_running=False)
+    monkeypatch.setattr(compose.subprocess, "run", fake)
+    assert invoke(smoke_project, "smoke").exit_code == 0
+    assert len(fake.calls) == 1  # no local broker check: the broker runs elsewhere
+    env = fake.envs[-1]
+    assert env["MQTT_BROKER_HOST"] == "pi.local"
+    assert env["SMOKE_REQUIRE_TELEMETRY"] == "false"  # devices run on another machine
+
+
+def test_smoke_requires_telemetry_on_single_machine(smoke_project: Path, monkeypatch) -> None:
+    fake = FakeCompose(broker_running=True)
+    monkeypatch.setattr(compose.subprocess, "run", fake)
+    assert invoke(smoke_project, "smoke").exit_code == 0
+    assert fake.envs[-1]["SMOKE_REQUIRE_TELEMETRY"] == "true"
+    assert fake.envs[-1]["MQTT_BROKER_HOST"] == "broker"

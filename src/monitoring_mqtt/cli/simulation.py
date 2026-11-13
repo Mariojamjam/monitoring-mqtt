@@ -11,13 +11,15 @@ Topology:
 
 The CLI validates the file and passes everything to Compose as variables, for example
 ``MQTT_QOS=0``, ``DEVICE_AQUACULTURE_REPLICAS=2``, ``MONITOR_POULTRY_REPLICAS=5``.
-Machine-specific settings (host port, smoke timeout) are not part of this file; they live
-in the user's ``.env``.
+Machine-specific settings (roles, broker address, host port, smoke timeout) are not part
+of this file; they live in the user's ``.env`` (see ``cli/machine.py``). A machine that runs
+only some roles applies the same experiment with the other services at 0 replicas.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -26,6 +28,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from monitoring_mqtt.core.topics import ALL_TELEMETRY_FILTER, domain_filter
+from monitoring_mqtt.simulator.behavior_config import BehaviorConfig
 from monitoring_mqtt.simulator.catalog import CatalogError, DeviceCatalog, load_catalog
 
 SIMULATION_FILE = Path("config/simulation.yaml")
@@ -97,6 +100,7 @@ class SimulationFile(_Section):
     devices: DevicesSection = Field(default_factory=DevicesSection)
     workers: dict[str, WorkerGroup]
     monitors: dict[str, MonitorGroup] = Field(default_factory=dict)
+    behavior: BehaviorConfig = Field(default_factory=BehaviorConfig)
 
 
 @dataclass(frozen=True)
@@ -137,6 +141,13 @@ class StackPlan:
     workers: list[ServicePlan]
     monitors: list[MonitorPlan]
 
+    def limited_to(self, *, devices: bool, monitors: bool) -> StackPlan:
+        """The plan for one machine: services of roles it does not run get 0 replicas."""
+        return StackPlan(
+            [w if devices else replace(w, replicas=0) for w in self.workers],
+            [m if monitors else replace(m, replicas=0) for m in self.monitors],
+        )
+
 
 @dataclass(frozen=True)
 class Simulation:
@@ -146,6 +157,8 @@ class Simulation:
     mqtt: MqttSection
     devices: DevicesSection
     plan: StackPlan
+    behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
+    source: Path = SIMULATION_FILE  # shown to the user; relative to the project when possible
 
 
 GLOBAL_MONITOR = "all"
@@ -212,9 +225,40 @@ def build_monitor_plan(topology: SimulationFile, catalog: DeviceCatalog) -> list
     ]
 
 
-def load_simulation(project_root: Path) -> Simulation:
-    """Read and validate config/simulation.yaml against the device catalog."""
-    path = project_root / SIMULATION_FILE
+def check_behavior(behavior: BehaviorConfig, catalog: DeviceCatalog) -> None:
+    """Device types named in the behaviour must exist and support what is asked."""
+    known = {t.name: t for t in catalog.device_types}
+    unknown = sorted(behavior.device_types() - set(known))
+    if unknown:
+        raise SimulationError(
+            f"behavior: unknown device type(s) {unknown}; valid types: {sorted(known)}"
+        )
+    anomalies = behavior.anomalies
+    if anomalies is None:
+        return
+    names = anomalies.only or list(known)
+    if not any(known[name].anomaly for name in names):
+        raise SimulationError(
+            "behavior.anomalies: none of these device types defines anomaly targets "
+            "(anomaly: {low, high} in config/devices.yaml)"
+        )
+
+
+def simulation_path(project_root: Path, config: Path | None = None) -> Path:
+    """The experiment file: ``config`` (relative to the working directory) or the default."""
+    return config.expanduser().resolve() if config else project_root / SIMULATION_FILE
+
+
+def _display_path(project_root: Path, path: Path) -> Path:
+    try:
+        return path.resolve().relative_to(project_root.resolve())
+    except ValueError:
+        return path
+
+
+def load_simulation(project_root: Path, config: Path | None = None) -> Simulation:
+    """Read and validate an experiment file (default config/simulation.yaml)."""
+    path = simulation_path(project_root, config)
     try:
         sim = SimulationFile.model_validate(_read_yaml(path))
         catalog = load_catalog(project_root / CATALOG_FILE)
@@ -223,15 +267,35 @@ def load_simulation(project_root: Path) -> Simulation:
     except CatalogError as exc:
         raise SimulationError(str(exc)) from exc
     plan = StackPlan(build_plan(sim, catalog), build_monitor_plan(sim, catalog))
-    return Simulation(run=sim.run, mqtt=sim.mqtt, devices=sim.devices, plan=plan)
+    check_behavior(sim.behavior, catalog)
+    return Simulation(
+        run=sim.run,
+        mqtt=sim.mqtt,
+        devices=sim.devices,
+        plan=plan,
+        behavior=sim.behavior,
+        source=_display_path(project_root, path),
+    )
 
 
 def generate_run_id(now: datetime | None = None) -> str:
     return (now or datetime.now(UTC)).strftime("run-%Y%m%dT%H%M%SZ")
 
 
-def resolve_run_id(sim: Simulation, now: datetime | None = None) -> str:
-    """The configured run id, or a new one: one per `stack up`, shared by every worker."""
+def validate_run_id(run_id: str) -> str:
+    if not re.match(RUN_ID_PATTERN, run_id):
+        raise SimulationError(
+            f"invalid run id {run_id!r}: use letters, digits, '.', '_' or '-' (max 64)"
+        )
+    return run_id
+
+
+def resolve_run_id(
+    sim: Simulation, override: str | None = None, *, now: datetime | None = None
+) -> str:
+    """``--run-id``, else the configured run id, else a new one (one per `stack up`)."""
+    if override:
+        return validate_run_id(override)
     return sim.run.run_id or generate_run_id(now)
 
 
@@ -259,6 +323,7 @@ def compose_env(sim: Simulation, run_id: str) -> dict[str, str]:
         "RUN_ID": run_id,
         "SIMULATION_SEED": str(sim.run.seed),
         "PUBLISH_INTERVAL_SECONDS": _number(sim.devices.publish_interval_seconds),
+        "SIMULATION_BEHAVIOR": sim.behavior.to_env(),
     }
     for worker in sim.plan.workers:
         env[f"{worker.env_prefix}_REPLICAS"] = str(worker.replicas)

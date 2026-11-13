@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 from collections.abc import Callable
@@ -12,10 +13,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from monitoring_mqtt.cli.dockerhost import DockerHostError, inspect_docker_host
+from monitoring_mqtt.cli.machine import DOCKER_HOST_ALIAS, Machine, MachineError, load_machine
 from monitoring_mqtt.cli.project import ProjectNotFoundError, resolve_project_root
 
 REQUIRED_PYTHON = (3, 12)
 COMMAND_TIMEOUT_SECONDS = 15
+BROKER_CONNECT_TIMEOUT_SECONDS = 3.0
 
 
 class Status(StrEnum):
@@ -126,7 +130,95 @@ def check_project(explicit: Path | None) -> CheckResult:
     return CheckResult("Project directory", Status.OK, f"{root.path} (via {root.source})")
 
 
-def run_checks(project_dir: Path | None, run: Runner = run_command) -> list[CheckResult]:
+Connector = Callable[[str, int], None]
+
+
+def tcp_connect(host: str, port: int) -> None:
+    """Open and close a TCP connection; raises ``OSError`` when unreachable."""
+    with socket.create_connection((host, port), timeout=BROKER_CONNECT_TIMEOUT_SECONDS):
+        pass
+
+
+def docker_host_address(run: Runner) -> str | None:
+    """What ``host.docker.internal`` reaches for containers, as seen from the host."""
+    try:
+        return inspect_docker_host(run).alias_target
+    except DockerHostError:
+        return None
+
+
+def broker_address(
+    machine: Machine, environment: str, docker_host: Callable[[], str | None]
+) -> tuple[str, int] | None:
+    """Where this CLI can reach the broker the services use; ``None`` if it cannot check.
+
+    Ports on the host's loopback (the local broker, a tunnel endpoint) and the Docker host
+    alias are not reachable the same way from inside a Dev Container, so they are not
+    checked there.
+    """
+    on_host = environment.startswith("host")
+    if not machine.remote_broker:
+        return ("127.0.0.1", machine.host_port) if on_host else None
+    host = machine.broker_host or ""
+    if machine.tunnel_on_host:
+        return (host, machine.broker_port) if on_host else None
+    if host == DOCKER_HOST_ALIAS:
+        resolved = docker_host() if on_host else None
+        return (resolved, machine.broker_port) if resolved else None
+    return host, machine.broker_port
+
+
+def check_machine(
+    explicit: Path | None,
+    connect: Connector = tcp_connect,
+    environment: str | None = None,
+    run: Runner = run_command,
+) -> list[CheckResult]:
+    """Machine roles (.env) and whether the broker they point to accepts connections."""
+    try:
+        root = resolve_project_root(explicit)
+    except ProjectNotFoundError:
+        return []  # already reported by the project check
+    try:
+        machine = load_machine(root.path)
+    except MachineError as exc:
+        return [CheckResult("Stack roles", Status.FAIL, f"{exc} (.env)")]
+    results = [
+        CheckResult(
+            "Stack roles", Status.OK, f"{machine.role_list}; broker {machine.describe_broker()}"
+        )
+    ]
+
+    environment = environment or detect_environment()
+    address = broker_address(machine, environment, lambda: docker_host_address(run))
+    if address is None:
+        results.append(
+            CheckResult(
+                "Broker",
+                Status.WARN if environment.startswith("host") else Status.OK,
+                "not checked from here; use 'monitoring-mqtt test smoke'",
+            )
+        )
+        return results
+    host, port = address
+    try:
+        connect(host, port)
+    except OSError as exc:
+        if machine.remote_broker:
+            status, hint = Status.FAIL, "check the address, network, tunnel or firewall"
+            if machine.broker_host == DOCKER_HOST_ALIAS:
+                hint += f"; it must listen on {host}, which containers reach as {DOCKER_HOST_ALIAS}"
+        else:
+            status, hint = Status.WARN, "start it with 'monitoring-mqtt stack up'"
+        results.append(CheckResult("Broker", status, f"{host}:{port} unreachable ({exc}); {hint}"))
+    else:
+        results.append(CheckResult("Broker", Status.OK, f"{host}:{port} accepts connections"))
+    return results
+
+
+def run_checks(
+    project_dir: Path | None, run: Runner = run_command, connect: Connector = tcp_connect
+) -> list[CheckResult]:
     return [
         check_environment(),
         check_python(),
@@ -134,4 +226,5 @@ def run_checks(project_dir: Path | None, run: Runner = run_command) -> list[Chec
         check_cli_on_path(),
         *check_docker(run),
         check_project(project_dir),
+        *check_machine(project_dir, connect, run=run),
     ]

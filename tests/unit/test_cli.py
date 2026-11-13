@@ -48,3 +48,66 @@ def test_doctor_exit_code(
     monkeypatch.setattr(doctor, "run_checks", fake_checks)
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == exit_code
+
+
+def _unreachable(host: str, port: int) -> None:
+    raise ConnectionRefusedError("refused")
+
+
+def test_machine_check_local_broker_down_is_a_warning(project: Path) -> None:
+    roles, broker = doctor.check_machine(project, _unreachable, environment="host (Linux)")
+    assert roles.status is Status.OK
+    assert broker.status is Status.WARN
+    assert "127.0.0.1:1883" in broker.detail
+
+
+def test_machine_check_remote_broker(project: Path) -> None:
+    (project / ".env").write_text("STACK_ROLES=devices\nMQTT_BROKER_HOST=10.0.0.9\n")
+    seen = []
+    _, broker = doctor.check_machine(
+        project, lambda host, port: seen.append((host, port)), environment="host (Linux)"
+    )
+    assert broker.status is Status.OK
+    assert seen == [("10.0.0.9", 1883)]
+    _, broker = doctor.check_machine(project, _unreachable, environment="host (Linux)")
+    assert broker.status is Status.FAIL
+
+
+def _docker(operating_system: str):
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        out = operating_system if args[1] == "info" else "172.17.0.1"
+        return subprocess.CompletedProcess(args, 0, stdout=out + "\n", stderr="")
+
+    return run
+
+
+_bridge = _docker("Ubuntu 24.04 LTS")
+
+
+def test_docker_host_alias_depends_on_docker_flavour() -> None:
+    assert doctor.docker_host_address(_bridge) == "172.17.0.1"  # Docker Engine: bridge
+    assert doctor.docker_host_address(_docker("Docker Desktop")) == "127.0.0.1"
+
+
+def test_machine_check_tunnel_alias_and_container(project: Path) -> None:
+    (project / ".env").write_text("STACK_ROLES=devices\nMQTT_BROKER_HOST=host.docker.internal\n")
+    seen = []
+    doctor.check_machine(
+        project, lambda h, p: seen.append((h, p)), environment="host (Linux)", run=_bridge
+    )
+    assert seen == [("172.17.0.1", 1883)]  # what containers reach
+    _, broker = doctor.check_machine(project, _unreachable, environment="devcontainer")
+    assert broker.status is Status.OK and "not checked" in broker.detail
+
+
+def test_machine_check_loopback_tunnel(project: Path) -> None:
+    (project / ".env").write_text("STACK_ROLES=devices\nMQTT_BROKER_HOST=127.0.0.1\n")
+    seen = []
+    doctor.check_machine(project, lambda h, p: seen.append((h, p)), environment="host (Linux)")
+    assert seen == [("127.0.0.1", 1883)]  # the tunnel itself, on the host
+
+
+def test_machine_check_invalid_settings(project: Path) -> None:
+    (project / ".env").write_text("STACK_ROLES=toaster\n")
+    [roles] = doctor.check_machine(project, _unreachable, environment="host (Linux)")
+    assert roles.status is Status.FAIL

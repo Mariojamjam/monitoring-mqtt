@@ -1,0 +1,33 @@
+# Experiment used by the integration tests: fast publications and fast failure detection,
+# so recovery scenarios take seconds. Several workers per type, fan-out and every monitor
+# kind, plus one scheduled anomaly to check the simulation ground truth.
+schema_version: 1
+
+run:
+  run_id: it-run
+  seed: 7
+  log_level: INFO
+
+mqtt:
+  qos: 1
+  keepalive_seconds: 5
+  clean_session: true
+  reconnect: {min_delay_seconds: 1, max_delay_seconds: 2}
+
+devices:
+  publish_interval_seconds: 0.5
+
+workers:
+  dissolved_oxygen_probe: {replicas: 1, devices_per_worker: 2}
+  ammonia_detector: {replicas: 2, devices_per_worker: 1}
+  rumen_ph_bolus: {replicas: 1, devices_per_worker: 1}
+
+monitors:
+  aquaculture: {replicas: 1}
+  poultry: {replicas: 2}
+  cattle: {replicas: 1}
+  all: {replicas: 1}
+
+behavior:
+  faults:
+    - {device: "cattle-*-001", at: 20s, lasts: 5s, action: anomaly, direction: high}

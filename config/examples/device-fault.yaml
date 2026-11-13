@@ -1,0 +1,19 @@
+# One worker with three ammonia detectors. Scheduled faults hit single devices while their
+# neighbours in the same container keep publishing:
+#   device 002 is switched off at 30 s for 30 s (silence; its sequence continues after)
+#   device 003 loses its connection at 40 s for 20 s (measurements lost: sequence gap)
+#
+#   monitoring-mqtt stack up -c config/examples/device-fault.yaml
+#   monitoring-mqtt tui
+schema_version: 1
+
+workers:
+  ammonia_detector: {replicas: 1, devices_per_worker: 3}
+
+monitors:
+  poultry: {replicas: 1}
+
+behavior:
+  faults:
+    - {device: "poultry-*-002", at: 30s, lasts: 30s, action: stop}
+    - {device: "poultry-*-003", at: 40s, lasts: 20s, action: disconnect}

@@ -7,11 +7,16 @@ Compose exit code is returned unchanged to the caller.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
 COMPOSE_PROJECT_NAME = "monitoring-mqtt"
+# Test-only override: integration tests run an isolated stack under another project name,
+# so they never touch the stack that host and Dev Container share.
+PROJECT_OVERRIDE_VARIABLE = "MONITORING_MQTT_COMPOSE_PROJECT"
+_PROJECT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 COMPOSE_FILE = "compose.yaml"
 DOCKER_NOT_FOUND_EXIT = 127
 INTERRUPTED_EXIT = 130
@@ -29,13 +34,27 @@ def compose_file(project_root: Path) -> Path:
     return project_root / COMPOSE_FILE
 
 
+def project_name() -> str:
+    """``monitoring-mqtt``, unless the test-only override variable names another project."""
+    override = os.environ.get(PROJECT_OVERRIDE_VARIABLE, "").strip()
+    if not override:
+        return COMPOSE_PROJECT_NAME
+    if not _PROJECT_NAME_RE.match(override):
+        raise ComposeError(
+            f"invalid {PROJECT_OVERRIDE_VARIABLE} {override!r}: use lowercase letters, "
+            "digits, '_' or '-'",
+            exit_code=2,
+        )
+    return override
+
+
 def build_command(project_root: Path, *args: str) -> list[str]:
     """Build the full ``docker compose`` argv for the project."""
     return [
         "docker",
         "compose",
         "--project-name",
-        COMPOSE_PROJECT_NAME,
+        project_name(),
         "--project-directory",
         str(project_root),
         "--file",

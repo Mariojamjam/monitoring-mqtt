@@ -1,11 +1,23 @@
-# Catalog of virtual device types.
+# Catalog of virtual device types: what each device IS. What happens during an experiment
+# (anomalies, instability, faults) is set in config/simulation.yaml.
 #
 # Workers assign types round-robin in this order: with 3 devices per worker there is one of
 # each type, and with 6 there are two of each. Every value is SYNTHETIC: these ranges are lab
 # parameters, not veterinary or clinical references.
 #
-# generator (kind: bounded_noise): value = center + uniform(-noise, +noise),
-# clipped to [minimum, maximum] and rounded to `decimals`.
+# generator        how the value evolves, one step per publication:
+#   kind: mean_reverting  value drifts and is pulled back to the device's mean:
+#                         next = clip(value + alpha * (mean - value) + gauss(0, noise),
+#                                     minimum, maximum)
+#     alpha               share of the distance to the mean recovered per step (0-1];
+#                         small = smooth, slow changes
+#     site_spread         each device's mean is shifted by up to this much (seeded), so
+#                         two ponds or barns are never identical
+#   kind: bounded_noise   independent values: center + uniform(-noise, +noise), clipped
+#   decimals              rounding of published values
+# operating_range  the synthetic normal band (shown by the terminal UI)
+# anomaly          where values go during an anomaly: low and/or high, outside the
+#                  operating range and inside the generator bounds
 
 schema_version: 1
 
@@ -16,12 +28,16 @@ device_types:
     unit: mg/L
     site_prefix: pond
     generator:
-      kind: bounded_noise
-      center: 6.5
-      noise: 1.0
-      minimum: 3.0
-      maximum: 10.0
+      kind: mean_reverting
+      mean: 6.5
+      alpha: 0.3
+      noise: 0.2
+      site_spread: 0.4
+      minimum: 2.0
+      maximum: 12.0
       decimals: 2
+    operating_range: {minimum: 5.0, maximum: 8.0}
+    anomaly: {low: 3.0, high: 10.0}
 
   - name: ammonia_detector
     domain: poultry
@@ -29,12 +45,16 @@ device_types:
     unit: ppm
     site_prefix: house
     generator:
-      kind: bounded_noise
-      center: 12.0
-      noise: 4.0
+      kind: mean_reverting
+      mean: 12.0
+      alpha: 0.3
+      noise: 1.0
+      site_spread: 2.0
       minimum: 0.0
-      maximum: 50.0
+      maximum: 60.0
       decimals: 1
+    operating_range: {minimum: 0.0, maximum: 25.0}
+    anomaly: {high: 40.0} # low ammonia is never a problem
 
   - name: rumen_ph_bolus
     domain: cattle
@@ -42,9 +62,13 @@ device_types:
     unit: null # pH is dimensionless
     site_prefix: herd
     generator:
-      kind: bounded_noise
-      center: 6.3
-      noise: 0.3
+      kind: mean_reverting
+      mean: 6.3
+      alpha: 0.3
+      noise: 0.06
+      site_spread: 0.15
       minimum: 5.0
-      maximum: 7.2
+      maximum: 7.5
       decimals: 2
+    operating_range: {minimum: 5.8, maximum: 6.8}
+    anomaly: {low: 5.2, high: 7.5}

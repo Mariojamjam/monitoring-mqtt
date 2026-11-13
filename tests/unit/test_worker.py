@@ -3,6 +3,14 @@ import threading
 from monitoring_mqtt.simulator.worker import SimulationWorker, initial_offsets
 
 
+class FakeGenerator:
+    def __init__(self) -> None:
+        self.target: float | None = None
+
+    def steer(self, target: float | None) -> None:
+        self.target = target
+
+
 class FakeDevice:
     def __init__(self, device_id: str, fail: bool = False) -> None:
         self.device_id = device_id
@@ -10,6 +18,8 @@ class FakeDevice:
         self.connected = False
         self.fail = fail
         self.started = self.stopped = False
+        self.generator = FakeGenerator()
+        self.published: list[int] = []
 
     def start(self) -> None:
         self.started = True
@@ -18,10 +28,21 @@ class FakeDevice:
     def stop(self) -> None:
         self.stopped = True
 
-    def publish_next(self) -> None:
+    def go_offline(self) -> None:
+        self.connected = False
+
+    def go_online(self) -> None:
+        self.connected = True
+
+    def next_measurement(self) -> int:
         self.sequence += 1
         if self.fail:
             raise RuntimeError("boom")
+        return self.sequence
+
+    def publish(self, measurement: int) -> int:
+        self.published.append(measurement)
+        return measurement
 
 
 def run_until(worker: SimulationWorker, devices: list[FakeDevice], publishes: int) -> None:

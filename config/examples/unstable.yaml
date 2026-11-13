@@ -1,0 +1,19 @@
+# Unreliable devices: every device pauses, delays or loses its connection about every
+# 2 minutes for 20 s. Watch sequence gaps (disconnect), silence (pause) and late bursts
+# with high latency (delay) in the terminal UI.
+#
+#   monitoring-mqtt stack up -c config/examples/unstable.yaml
+schema_version: 1
+
+workers:
+  dissolved_oxygen_probe: {replicas: 1, devices_per_worker: 3}
+  ammonia_detector: {replicas: 1, devices_per_worker: 3}
+
+monitors:
+  aquaculture: {replicas: 1}
+  poultry: {replicas: 1}
+
+behavior:
+  instability:
+    every: 2m
+    lasts: 20s

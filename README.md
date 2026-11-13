@@ -13,10 +13,12 @@ topics they are interested in.
 
 All values are **synthetic**. They are not veterinary or clinical reference values.
 
-> **Status:** v0.1.0, the first release. The three device types publish through Mosquitto.
-> A versioned topology file sets how many worker containers and devices run per type.
-> Independent monitors receive only the domain they subscribe to, and a smoke test verifies
-> the flow end to end.
+> **Status:** v0.2.0. The three device types publish through Mosquitto. A versioned
+> experiment file sets how many worker containers and devices run per type. Independent
+> monitors receive only the domain they subscribe to, and a smoke test verifies the flow end
+> to end. Parts of the stack can run on different machines, a read-only terminal UI shows
+> who publishes and who consumes, and failures and recovery are documented with measured
+> results.
 
 ## Getting started
 
@@ -76,6 +78,8 @@ monitoring-mqtt stack logs device-aquaculture   # oxygen measurements being publ
 monitoring-mqtt stack logs monitor-aquaculture  # only aquaculture events, validated
 monitoring-mqtt stack logs monitor-poultry      # only poultry events, validated
 monitoring-mqtt stack logs monitor-cattle       # only cattle events, validated
+monitoring-mqtt tui                             # live view: publishers, broker, subscribers
+monitoring-mqtt stack workers                   # device workers registered in the broker
 monitoring-mqtt test smoke                      # end-to-end check of the running stack
 monitoring-mqtt stack down
 ```
@@ -96,6 +100,7 @@ each event from publisher to subscriber. Without installing the command, you can
 | `monitor-poultry` | Subscriber to `monitoring/v1/poultry/#` |
 | `monitor-cattle` | Subscriber to `monitoring/v1/cattle/#` |
 | `monitor-all` | Global subscriber to `monitoring/v1/#` (0 replicas by default) |
+| `broker-relay` | Forwards to a broker tunnel on this machine's loopback; started only when needed (see [distributed.md](docs/distributed.md#tunnels)) |
 
 Each virtual device publishes every 5 s over its own MQTT connection. Publishers and
 subscribers never know about each other. A device publishes whether or not any monitor
@@ -108,8 +113,9 @@ Configuration is split by purpose:
 | Where | What | Versioned |
 |---|---|---|
 | [`config/simulation.yaml`](config/simulation.yaml) | Everything that defines an experiment | Yes |
-| [`config/devices.yaml`](config/devices.yaml) | The device catalog: what each sensor type measures and its synthetic range | Yes |
-| `.env` (copied from [`.env.example`](.env.example)) | Settings of your machine only: the host port and the smoke test timeout | No |
+| [`config/devices.yaml`](config/devices.yaml) | The device catalog: what each sensor type measures, how its value evolves, its normal band and anomaly targets | Yes |
+| [`config/examples/`](config/examples) | Ready-made experiments: anomalies, unstable devices, single-device faults | Yes |
+| `.env` (copied from [`.env.example`](.env.example)) | Settings of your machine only: which parts of the stack run here, the broker address, the host port and the smoke test timeout | No |
 
 `config/simulation.yaml` describes one experiment. The defaults shown below run one
 container per device and one monitor per domain:
@@ -145,6 +151,10 @@ monitors:                   # subscribers, per kind
   delivers its own copy of each matching message to each one (fan-out). Replicas do not
   share the load.
 
+- **Behaviour.** An optional `behavior` section adds anomalies, instability (pauses,
+  delays, disconnections) and scheduled faults on single devices, for example
+  `anomalies: {every: 2m, lasts: 30s}`. See [docs/simulation.md](docs/simulation.md).
+
 To run a different experiment, edit the file and run `monitoring-mqtt stack up` again. No
 image rebuild is needed. Every `stack up` starts a **new run**: it prints the experiment
 parameters and the `run_id`, labels every worker container with that id, recreates the
@@ -160,13 +170,18 @@ applies the file.
 |---|---|
 | `monitoring-mqtt --help` | Show available commands |
 | `monitoring-mqtt version` | Show the installed version |
-| `monitoring-mqtt doctor` | Check the environment (host or Dev Container), Python, uv, Docker (including the daemon ID), Compose and the project directory |
-| `monitoring-mqtt stack up [--build]` | Apply `config/simulation.yaml`, start the stack in the background, wait until it is healthy, then print and verify the device topology |
+| `monitoring-mqtt doctor` | Check the environment (host or Dev Container), Python, uv, Docker (including the daemon ID), Compose, the project directory, this machine's roles and the broker connection |
+| `monitoring-mqtt stack up [--build] [--config FILE] [--run-id ID]` | Apply `config/simulation.yaml` (or `FILE`), start this machine's part of the stack in the background, wait until it is healthy, then print and verify the device topology |
+| `monitoring-mqtt stack workers` | List the device workers registered in the broker, from every machine |
+| `monitoring-mqtt tui [--config FILE]` | Open the read-only terminal UI: who publishes, the broker and who consumes, live |
+| `monitoring-mqtt stack restart [SERVICE...] [-t SECONDS]` | Restart running containers as they are (same run id), e.g. `stack restart broker` |
+| `monitoring-mqtt device stop\|pause\|delay\|disconnect\|anomaly\|resume DEVICE_ID [--for 30s]` | Live command to one device; its neighbours keep publishing |
 | `monitoring-mqtt stack down` | Stop and remove the stack containers and network |
 | `monitoring-mqtt stack status` | Show the state of every service |
 | `monitoring-mqtt stack logs [SERVICE] [--no-follow] [-n N]` | Show logs; follows by default, Ctrl+C stops following |
 | `monitoring-mqtt test unit [PYTEST ARGS]` | Run the unit tests; extra arguments go to pytest, e.g. `-k topics` |
-| `monitoring-mqtt test smoke` | Check the running stack end to end from inside the Compose network; exit code 0 means it passed |
+| `monitoring-mqtt test integration [PYTEST ARGS]` | Run the integration suite on an isolated stack (Docker, about 2 minutes); your stack is not touched |
+| `monitoring-mqtt test smoke [--config FILE]` | Check the broker this machine uses end to end from a container; exit code 0 means it passed |
 
 The global option `--project-dir PATH` selects the checkout to operate on. Without it, the
 CLI looks for the project in this order:
@@ -183,19 +198,25 @@ is up, it keeps running without the CLI.
 
 ## Documentation
 
+- [System design](docs/design.md): how every part communicates (MQTT, HTTP, SQL), with diagrams; implemented and planned components.
 - [Architecture](docs/architecture.md): components, data flow, failure behaviour and security boundaries.
+- [Simulation](docs/simulation.md): how values evolve, anomalies, instability, scheduled faults, live device commands and ground truth.
+- [Failures and recovery](docs/failures.md): how to provoke each failure, how it is detected and what happens to the data, with measured results.
 - [MQTT contract](docs/mqtt-contract.md): topics, payload schema, identities and QoS semantics.
 - [Development guide](docs/development.md): environment setup, configuration, tests and code quality.
+- [Terminal UI](docs/tui.md): screens, keys, data sources and demonstration scenarios.
+- [Running on several machines](docs/distributed.md): broker on one machine (for example a Raspberry Pi), devices and monitors on others.
 
 ## Limitations
 
-- The broker allows anonymous access. It is meant for an isolated local lab, and its port is
-  published only on `127.0.0.1`. Do not expose it to other networks.
+- The broker allows anonymous access. It is meant for an isolated lab: its port is published
+  only on `127.0.0.1` by default. Expose it to other machines (`MQTT_BIND_ADDRESS`) only on
+  an isolated network or through a private tunnel.
 - A single Mosquitto instance is a single point of failure. The stack makes no
   high-availability claims.
 - QoS 1 is at-least-once delivery, so duplicates are possible. Telemetry is not retained, so
   subscribers only see messages published while they are connected.
-- Values come from a simple bounded-noise generator and are synthetic.
+- Values are synthetic: a mean-reverting random process per device, not a physical model.
 - Running `docker compose up` directly, without the CLI, ignores `config/simulation.yaml`
   and starts the default experiment.
 - With `clean_session: false`, a subscriber's queued messages survive `docker stop` and

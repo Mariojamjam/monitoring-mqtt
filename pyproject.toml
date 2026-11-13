@@ -1,6 +1,6 @@
 [project]
 name = "monitoring-mqtt"
-version = "0.1.0"
+version = "0.2.0"
 description = "Publish/Subscribe lab simulating chemical-monitoring IoT devices over MQTT."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -9,6 +9,7 @@ dependencies = [
     "pydantic>=2.14.3",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
+    "textual>=8.2.8",
     "typer>=0.27.3",
 ]
 
@@ -32,8 +33,11 @@ per-file-target-version = { "scripts/bootstrap.py" = "py39" }
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# `pytest` alone runs the unit tests; the integration suite needs Docker and is run with
+# `monitoring-mqtt test integration` (or `pytest tests/integration`).
+testpaths = ["tests/unit"]
 addopts = "-ra"
+markers = ["integration: needs Docker; starts an isolated stack (monitoring-mqtt-it)"]
 
 [dependency-groups]
 dev = [
