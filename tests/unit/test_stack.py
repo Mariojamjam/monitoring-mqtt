@@ -67,6 +67,15 @@ def test_compose_always_targets_fixed_project_and_file(project: Path) -> None:
     assert argv[argv.index("--file") + 1] == str(project / "compose.yaml")
 
 
+def test_integration_tests_can_use_another_project(project: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MONITORING_MQTT_COMPOSE_PROJECT", "monitoring-mqtt-it")
+    argv = compose.build_command(project)
+    assert argv[argv.index("--project-name") + 1] == "monitoring-mqtt-it"
+    monkeypatch.setenv("MONITORING_MQTT_COMPOSE_PROJECT", "Bad Name")
+    with pytest.raises(compose.ComposeError):
+        compose.build_command(project)
+
+
 @pytest.mark.parametrize(
     ("cli_args", "compose_args"),
     [

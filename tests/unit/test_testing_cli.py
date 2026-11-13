@@ -42,6 +42,19 @@ def test_unit_passes_args_to_pytest_and_preserves_exit_code(project: Path, monke
     assert seen["cwd"] == project.resolve()
 
 
+def test_integration_runs_its_own_suite(project: Path, monkeypatch) -> None:
+    seen = {}
+
+    def fake_run(command, cwd, check):
+        seen.update(command=command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(testing.subprocess, "run", fake_run)
+    assert invoke(project, "integration", "-k", "recovery").exit_code == 0
+    assert seen["command"] == ["uv", "run", "--frozen", "pytest", "tests/integration", "-k",
+                               "recovery"]  # fmt: skip
+
+
 def test_unit_without_uv_exits_127(project: Path, monkeypatch) -> None:
     def missing(command, cwd, check):
         raise FileNotFoundError("uv")
