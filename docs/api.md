@@ -5,7 +5,7 @@ writes through it and everything else reads through it ([storage.md](storage.md)
 
 | | |
 |---|---|
-| Base URL | `http://127.0.0.1:8000` (`API_BIND_ADDRESS`, `API_HOST_PORT` in `.env`) |
+| Base URL | `http://127.0.0.1:8000` (`API_BIND_ADDRESS`, `API_HOST_PORT` in `.env`); the API routes are under **`/api`**, while `/health`, `/ready`, `/docs` and `/openapi.json` stay at the root |
 | Interactive reference | **`/docs`**: a [Scalar](https://scalar.com) API reference, with request examples and a client to try every route |
 | OpenAPI document | `/openapi.json`; a copy is versioned in [`openapi.json`](openapi.json) |
 | Format | JSON; times in ISO 8601 with a time zone (UTC) |
@@ -23,27 +23,27 @@ uv run python -m monitoring_mqtt.api.docs > docs/openapi.json
 |---|---|
 | `GET /health` | The process is running (never touches the database; used by the healthcheck) |
 | `GET /ready` | The API can reach the database: 200, or 503 |
-| `POST /ingest/measurements` | Store a batch of measurements (ingestion consumer) |
-| `POST /ingest/alerts` | Store a batch of alert events (ingestion consumer) |
-| `GET /devices` | Devices with their latest value and open alert count; filters `domain`, `device_type`, `run_id` |
-| `GET /devices/{device_id}` | One device, how many measurements are stored, its open alerts |
-| `GET /measurements` | Measurements, newest first; filters `device_id`, `domain`, `metric`, `run_id`, `from`, `to` |
-| `GET /measurements/series` | Average, minimum, maximum and count per time bucket for one device (`bucket=10s`, `1m`, `1h`…) |
-| `GET /alerts` | Alerts, newest first; filters `state` (`active`, `cleared`), `severity`, `domain`, `device_id`, `rule_id`, `run_id`, `from`, `to` |
-| `GET /alerts/{alert_id}` | One alert, with its duration once cleared |
-| `GET /runs`, `GET /runs/{run_id}` | Runs (one per `stack up`) with measurement, device and alert counts, per domain |
-| `GET /stats` | Totals, open alerts, and the average delay to the database |
+| `POST /api/ingest/measurements` | Store a batch of measurements (ingestion consumer) |
+| `POST /api/ingest/alerts` | Store a batch of alert events (ingestion consumer) |
+| `GET /api/devices` | Devices with their latest value and open alert count; filters `domain`, `device_type`, `run_id` |
+| `GET /api/devices/{device_id}` | One device, how many measurements are stored, its open alerts |
+| `GET /api/measurements` | Measurements, newest first; filters `device_id`, `domain`, `metric`, `run_id`, `from`, `to` |
+| `GET /api/measurements/series` | Average, minimum, maximum and count per time bucket for one device (`bucket=10s`, `1m`, `1h`…) |
+| `GET /api/alerts` | Alerts, newest first; filters `state` (`active`, `cleared`), `severity`, `domain`, `device_id`, `rule_id`, `run_id`, `from`, `to` |
+| `GET /api/alerts/{alert_id}` | One alert, with its duration once cleared |
+| `GET /api/runs`, `GET /api/runs/{run_id}` | Runs (one per `stack up`) with measurement, device and alert counts, per domain |
+| `GET /api/stats` | Totals, open alerts, and the average delay to the database |
 
 ## Examples
 
 ```bash
 API=http://127.0.0.1:8000
-curl -s $API/stats
-curl -s "$API/devices?domain=poultry"
-curl -s "$API/measurements?device_id=poultry-3f9a1c-001&from=2026-11-13T12:00:00Z&limit=50"
-curl -s "$API/measurements/series?device_id=poultry-3f9a1c-001&bucket=1m"
-curl -s "$API/alerts?state=active"
-curl -s "$API/runs/run-20261113T120000Z"
+curl -s $API/api/stats
+curl -s "$API/api/devices?domain=poultry"
+curl -s "$API/api/measurements?device_id=poultry-3f9a1c-001&from=2026-11-13T12:00:00Z&limit=50"
+curl -s "$API/api/measurements/series?device_id=poultry-3f9a1c-001&bucket=1m"
+curl -s "$API/api/alerts?state=active"
+curl -s "$API/api/runs/run-20261113T120000Z"
 ```
 
 ## Pagination
@@ -59,7 +59,7 @@ row. An invalid cursor answers 400.
 ## Ingestion batches
 
 ```json
-POST /ingest/measurements
+POST /api/ingest/measurements
 {
   "source": "ingestion",
   "items": [

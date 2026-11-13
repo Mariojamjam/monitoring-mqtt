@@ -93,10 +93,10 @@ def test_batch_is_stored_once_and_invalid_items_are_reported(
 ) -> None:
     items = [item(measurement, sequence=1), item(measurement, sequence=2), {
         "received_at": NOW.isoformat(), "event": {"value": "high"}}]  # fmt: skip
-    first = client.post("/ingest/measurements", json={"source": "t", "items": items}).json()
+    first = client.post("/api/ingest/measurements", json={"source": "t", "items": items}).json()
     assert (first["received"], first["stored"], first["duplicates"]) == (3, 2, 0)
     assert first["rejected"][0]["index"] == 2 and "Field required" in first["rejected"][0]["reason"]
-    again = client.post("/ingest/measurements", json={"source": "t", "items": items[:2]}).json()
+    again = client.post("/api/ingest/measurements", json={"source": "t", "items": items[:2]}).json()
     assert (again["stored"], again["duplicates"]) == (0, 2)  # a retried batch
     assert store.stored[0].received_at == NOW
 
@@ -104,45 +104,46 @@ def test_batch_is_stored_once_and_invalid_items_are_reported(
 def test_ingest_limits_and_outages(client: TestClient, store: FakeStore, measurement) -> None:
     one = item(measurement)
     too_many = {"source": "t", "items": [one] * 1001}
-    assert client.post("/ingest/measurements", json=too_many).status_code == 413
-    malformed = client.post("/ingest/measurements", json={"items": "nope"})
+    assert client.post("/api/ingest/measurements", json=too_many).status_code == 413
+    malformed = client.post("/api/ingest/measurements", json={"items": "nope"})
     assert malformed.status_code == 422
     store.down = True
-    response = client.post("/ingest/measurements", json={"source": "t", "items": [one]})
+    response = client.post("/api/ingest/measurements", json={"source": "t", "items": [one]})
     assert response.status_code == 503  # the consumer keeps the batch and retries
 
 
 def test_alerts_are_validated_with_the_alert_contract(client: TestClient) -> None:
-    response = client.post("/ingest/alerts", json={"source": "t", "items": [
+    response = client.post("/api/ingest/alerts", json={"source": "t", "items": [
         {"received_at": NOW.isoformat(), "event": {"state": "raised"}}]})  # fmt: skip
     assert response.json()["rejected"][0]["index"] == 0
 
 
 def test_query_parameters(client: TestClient, store: FakeStore) -> None:
     since = (NOW - timedelta(hours=1)).isoformat()
-    response = client.get("/measurements", params={"device_id": "d1", "from": since, "limit": 10})
+    params = {"device_id": "d1", "from": since, "limit": 10}
+    response = client.get("/api/measurements", params=params)
     assert response.status_code == 200 and response.json() == {"items": [], "next_cursor": None}
     _, filters = store.calls[-1]
     assert filters["device_id"] == "d1" and filters["limit"] == 10 and filters["since"].tzinfo
-    assert client.get("/measurements", params={"limit": 0}).status_code == 422
-    assert client.get("/measurements", params={"cursor": "bad"}).status_code == 400
-    client.get("/alerts", params={"state": "active"})
+    assert client.get("/api/measurements", params={"limit": 0}).status_code == 422
+    assert client.get("/api/measurements", params={"cursor": "bad"}).status_code == 400
+    client.get("/api/alerts", params={"state": "active"})
     assert store.calls[-1][1]["state"] == "raised"
-    assert client.get("/alerts", params={"state": "open"}).status_code == 422
+    assert client.get("/api/alerts", params={"state": "open"}).status_code == 422
 
 
 def test_series_bucket(client: TestClient, store: FakeStore) -> None:
-    body = client.get("/measurements/series", params={"device_id": "d1", "bucket": "5m"}).json()
+    body = client.get("/api/measurements/series", params={"device_id": "d1", "bucket": "5m"}).json()
     assert body["bucket_seconds"] == 300 and body["points"][0]["count"] == 2
-    bad = client.get("/measurements/series", params={"device_id": "d1", "bucket": "30"})
+    bad = client.get("/api/measurements/series", params={"device_id": "d1", "bucket": "30"})
     assert bad.status_code == 422 and "add a unit" in bad.json()["detail"]
-    assert client.get("/measurements/series", params={"device_id": "d1", "bucket": "500ms"}
+    assert client.get("/api/measurements/series", params={"device_id": "d1", "bucket": "500ms"}
                       ).status_code == 422  # fmt: skip
 
 
 def test_not_found(client: TestClient) -> None:
-    assert client.get("/devices/x").status_code == 404
-    assert client.get("/runs/x").status_code == 404
+    assert client.get("/api/devices/x").status_code == 404
+    assert client.get("/api/runs/x").status_code == 404
 
 
 def test_cursor_round_trip() -> None:
@@ -158,7 +159,7 @@ def test_reference_page_and_openapi(client: TestClient) -> None:
     assert page.status_code == 200 and SCALAR_SCRIPT in page.text and "/openapi.json" in page.text
     schema = client.get("/openapi.json").json()
     assert {"Measurement", "AlertEvent", "IngestResult"} <= set(schema["components"]["schemas"])
-    assert "/measurements/series" in schema["paths"]
+    assert "/api/measurements/series" in schema["paths"]
 
 
 def test_committed_openapi_document_is_up_to_date(client: TestClient) -> None:

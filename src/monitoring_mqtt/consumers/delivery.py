@@ -18,8 +18,8 @@ import httpx
 
 from monitoring_mqtt.core.ingest import IngestBatch, IngestResult
 
-MEASUREMENTS_PATH = "/ingest/measurements"
-ALERTS_PATH = "/ingest/alerts"
+MEASUREMENTS_PATH = "/api/ingest/measurements"
+ALERTS_PATH = "/api/ingest/alerts"
 
 
 class RetryLaterError(RuntimeError):

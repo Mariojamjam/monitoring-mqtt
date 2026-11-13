@@ -85,7 +85,7 @@ without the CLI.
 | Monitor | Broker | MQTT retained + Last Will | `monitoring/status/v1/monitors/{client_id}`: filter, counters, last messages received | implemented |
 | Broker | TUI | MQTT delivery | Telemetry, worker claims, monitor status, simulation ground truth, `$SYS` broker statistics | implemented |
 | Broker | Ingestion consumer | MQTT delivery, persistent session | All telemetry (`monitoring/v1/#`) and alert events (`monitoring/alerts/v1/events/#`) | implemented |
-| Ingestion consumer | FastAPI | HTTP POST, JSON | Batches of measurements and alerts to store (`/ingest/...`) | implemented |
+| Ingestion consumer | FastAPI | HTTP POST, JSON | Batches of measurements and alerts to store (`/api/ingest/...`) | implemented |
 | FastAPI | PostgreSQL | SQL (write) | Measurements and alerts; duplicates dropped by `event_id` / alert transition | implemented |
 | Broker | Alert engine | MQTT delivery, persistent session | Telemetry to check against rules | implemented |
 | Alert engine | Broker | MQTT PUBLISH | `monitoring/alerts/v1/events/{domain}/{severity}/{device_id}`: derived event that references the measurement; `…/active/{device_id}/{rule_id}` retained | implemented |
@@ -135,13 +135,13 @@ independently.
   enters through it, and everything that is read leaves through it, so the schema, the
   validation and the deduplication live in one place.
 - **Write side.** The ingestion consumer receives events from the broker and sends them to
-  the API in batches: `POST /ingest/measurements` and `POST /ingest/alerts` with a JSON
+  the API in batches: `POST /api/ingest/measurements` and `POST /api/ingest/alerts` with a JSON
   list. The API validates each event against the same contract as the monitors and stores
   it once (see SQL below). Batches keep the number of HTTP requests low when hundreds of
   devices publish.
-- **Read side.** JSON queries over the history: `GET /devices`,
-  `GET /measurements?device_id=…&from=…&to=…`, `GET /measurements/series`, `GET /alerts`,
-  `GET /runs`, `GET /stats`, plus `GET /health` and `GET /ready`. The API publishes its
+- **Read side.** JSON queries over the history: `GET /api/devices`,
+  `GET /api/measurements?device_id=…&from=…&to=…`, `GET /api/measurements/series`, `GET /api/alerts`,
+  `GET /api/runs`, `GET /api/stats`, plus `GET /health` and `GET /ready`. The API publishes its
   OpenAPI description, with a Scalar reference at `/docs` ([api.md](api.md)).
 - **Why a bridge instead of letting the API subscribe.** The API stays a plain HTTP
   service that can be restarted, scaled or tested without the broker, and the MQTT side
@@ -204,12 +204,12 @@ sequenceDiagram
   participant S as Streamlit
   B->>I: deliver measurements
   I->>I: buffer up to a batch or a short timeout
-  I->>A: POST /ingest/measurements (JSON list)
+  I->>A: POST /api/ingest/measurements (JSON list)
   A->>A: validate against the contract
   A->>DB: INSERT ... ON CONFLICT (event_id) DO NOTHING
   A-->>I: 200 stored / duplicates
   loop every few seconds
-    S->>A: GET /measurements?device_id=...&from=...
+    S->>A: GET /api/measurements?device_id=...&from=...
     A->>DB: SELECT ...
     DB-->>A: rows
     A-->>S: JSON
@@ -230,7 +230,7 @@ sequenceDiagram
   AL->>B: PUBLISH monitoring/alerts/v1/events/poultry/warning/{device} (references event_id)
   AL->>B: PUBLISH monitoring/alerts/v1/active/{device}/{rule} (retained)
   B->>I: deliver alert
-  I->>A: POST /ingest/alerts
+  I->>A: POST /api/ingest/alerts
   A->>DB: INSERT alert
 ```
 

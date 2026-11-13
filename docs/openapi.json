@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Monitoring MQTT",
-    "description": "History of the Monitoring MQTT lab. The API is the **only** component that talks to the\ndatabase.\n\n- **Write side** (`/ingest`): the ingestion consumer posts batches of events it received\n  from the broker. Every event is stored once (idempotent by id).\n- **Read side**: devices, measurements, alerts and runs, as JSON.\n\nLists are paginated with a cursor: pass `next_cursor` back as `cursor` to get the next\npage (`null` on the last one). Times are ISO 8601 with a time zone (UTC).\n\nWhen the database is unavailable, every route that needs it answers **503** with a\n`Retry-After` header.\n",
+    "description": "History of the Monitoring MQTT lab. The API is the **only** component that talks to the\ndatabase.\n\n- **Write side** (`/api/ingest`): the ingestion consumer posts batches of events it received\n  from the broker. Every event is stored once (idempotent by id).\n- **Read side** (`/api/...`): devices, measurements, alerts and runs, as JSON.\n\n`/health` and `/ready` stay at the root, for container healthchecks.\n\nLists are paginated with a cursor: pass `next_cursor` back as `cursor` to get the next\npage (`null` on the last one). Times are ISO 8601 with a time zone (UTC).\n\nWhen the database is unavailable, every route that needs it answers **503** with a\n`Retry-After` header.\n",
     "version": "0.3.0"
   },
   "paths": {
@@ -52,14 +52,14 @@
         }
       }
     },
-    "/ingest/measurements": {
+    "/api/ingest/measurements": {
       "post": {
         "tags": [
           "ingest"
         ],
         "summary": "Store a batch of measurements",
         "description": "Each item's ``event`` is a telemetry payload (schema `Measurement`).\n\nValid items are stored once per `event_id` (repeats count as `duplicates`); invalid\nitems are listed in `rejected` with the reason, and do not prevent the others.",
-        "operationId": "ingest_measurements_ingest_measurements_post",
+        "operationId": "ingest_measurements_api_ingest_measurements_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -101,14 +101,14 @@
         "x-event-schema": "Measurement"
       }
     },
-    "/ingest/alerts": {
+    "/api/ingest/alerts": {
       "post": {
         "tags": [
           "ingest"
         ],
         "summary": "Store a batch of alert events",
         "description": "Each item's ``event`` is an alert event (schema `AlertEvent`).\n\n`raised` opens the alert and `cleared` closes it, in any order; repeats are\n`duplicates`.",
-        "operationId": "ingest_alerts_ingest_alerts_post",
+        "operationId": "ingest_alerts_api_ingest_alerts_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -150,14 +150,14 @@
         "x-event-schema": "AlertEvent"
       }
     },
-    "/devices": {
+    "/api/devices": {
       "get": {
         "tags": [
           "devices"
         ],
         "summary": "List devices with their latest value",
         "description": "Ordered by `device_id`. `open_alerts` counts the device's alerts still raised.",
-        "operationId": "list_devices_devices_get",
+        "operationId": "list_devices_api_devices_get",
         "parameters": [
           {
             "name": "domain",
@@ -273,14 +273,14 @@
         }
       }
     },
-    "/devices/{device_id}": {
+    "/api/devices/{device_id}": {
       "get": {
         "tags": [
           "devices"
         ],
         "summary": "One device",
         "description": "The device, how many measurements are stored and its open alerts.",
-        "operationId": "get_device_devices__device_id__get",
+        "operationId": "get_device_api_devices__device_id__get",
         "parameters": [
           {
             "name": "device_id",
@@ -322,14 +322,14 @@
         }
       }
     },
-    "/measurements": {
+    "/api/measurements": {
       "get": {
         "tags": [
           "measurements"
         ],
         "summary": "List measurements, newest first",
         "description": "Filters combine with AND. Each item carries its three times: generated on the\ndevice, received by the ingestion consumer, stored by the database.",
-        "operationId": "list_measurements_measurements_get",
+        "operationId": "list_measurements_api_measurements_get",
         "parameters": [
           {
             "name": "device_id",
@@ -493,14 +493,14 @@
         }
       }
     },
-    "/measurements/series": {
+    "/api/measurements/series": {
       "get": {
         "tags": [
           "measurements"
         ],
         "summary": "Aggregated time series of one device",
         "description": "Average, minimum, maximum and count per bucket, oldest first (at most 2000\nbuckets: the most recent ones). Ready for charts.",
-        "operationId": "series_measurements_series_get",
+        "operationId": "series_api_measurements_series_get",
         "parameters": [
           {
             "name": "device_id",
@@ -591,14 +591,14 @@
         }
       }
     },
-    "/alerts": {
+    "/api/alerts": {
       "get": {
         "tags": [
           "alerts"
         ],
         "summary": "List alerts, newest first",
         "description": "Ordered by the time the alert was raised. `from`/`to` filter on that time too.",
-        "operationId": "list_alerts_alerts_get",
+        "operationId": "list_alerts_api_alerts_get",
         "parameters": [
           {
             "name": "state",
@@ -804,13 +804,13 @@
         }
       }
     },
-    "/alerts/{alert_id}": {
+    "/api/alerts/{alert_id}": {
       "get": {
         "tags": [
           "alerts"
         ],
         "summary": "One alert",
-        "operationId": "get_alert_alerts__alert_id__get",
+        "operationId": "get_alert_api_alerts__alert_id__get",
         "parameters": [
           {
             "name": "alert_id",
@@ -853,14 +853,14 @@
         }
       }
     },
-    "/runs": {
+    "/api/runs": {
       "get": {
         "tags": [
           "runs"
         ],
         "summary": "List runs, newest first",
         "description": "Every `run_id` seen in the measurements, with what was stored for it.",
-        "operationId": "list_runs_runs_get",
+        "operationId": "list_runs_api_runs_get",
         "parameters": [
           {
             "name": "limit",
@@ -887,7 +887,7 @@
                   "items": {
                     "$ref": "#/components/schemas/Run"
                   },
-                  "title": "Response List Runs Runs Get"
+                  "title": "Response List Runs Api Runs Get"
                 }
               }
             }
@@ -908,13 +908,13 @@
         }
       }
     },
-    "/runs/{run_id}": {
+    "/api/runs/{run_id}": {
       "get": {
         "tags": [
           "runs"
         ],
         "summary": "One run",
-        "operationId": "get_run_runs__run_id__get",
+        "operationId": "get_run_api_runs__run_id__get",
         "parameters": [
           {
             "name": "run_id",
@@ -956,14 +956,14 @@
         }
       }
     },
-    "/stats": {
+    "/api/stats": {
       "get": {
         "tags": [
           "runs"
         ],
         "summary": "Totals and storage delays",
         "description": "How much is stored, open alerts, and how long events take to reach the database.",
-        "operationId": "stats_stats_get",
+        "operationId": "stats_api_stats_get",
         "responses": {
           "200": {
             "description": "Successful Response",

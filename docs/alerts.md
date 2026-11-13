@@ -80,7 +80,7 @@ The integration tests check this. Only one engine may run at a time; `stack up` 
 ```bash
 monitoring-mqtt device anomaly poultry-3f9a1c-001 --for 30s   # make one device anomalous
 monitoring-mqtt tui                                           # Mode: anomaly ↑ + alert warning; `a` lists open alerts
-curl -s "http://127.0.0.1:8000/alerts?state=active"
+curl -s "http://127.0.0.1:8000/api/alerts?state=active"
 docker compose -p monitoring-mqtt logs -f alerts              # every transition is logged
 ```
 
@@ -94,7 +94,7 @@ false alarms.
 Measured with `config/examples/alerts-demo.yaml`: 6 devices (2 per type), an anomaly about
 every minute per device lasting 30 s, publications every 5 s, the shipped rules, 9.5
 minutes. A recorder subscribed to the ground truth during the run; the alerts came from
-`GET /alerts?run_id=…`. An episode counts as detected when an alert of the right direction
+`GET /api/alerts?run_id=…`. An episode counts as detected when an alert of the right direction
 (`above` for a high anomaly) was raised on that device between the start of the episode
 and 15 s after its end.
 

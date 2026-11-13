@@ -55,8 +55,8 @@ def test_everything_the_observer_saw_is_stored(stack: Stack, observer: Observer)
 
 def test_a_repeated_event_is_stored_once(stack: Stack, observer: Observer) -> None:
     device = observer.active("poultry")[0]
-    (row,) = stack.api("/measurements", device_id=device, limit=1)["items"]  # type: ignore[index]
-    info = stack.api(f"/devices/{device}")
+    (row,) = stack.api("/api/measurements", device_id=device, limit=1)["items"]  # type: ignore[index]
+    info = stack.api(f"/api/devices/{device}")
     m = Measurement.model_validate({
         **{k: row[k] for k in ("event_id", "run_id", "device_id", "domain", "site_id", "metric",
                                "value", "unit", "sequence")},
@@ -66,18 +66,18 @@ def test_a_repeated_event_is_stored_once(stack: Stack, observer: Observer) -> No
         observer.publish(m.topic, m.to_payload())
     time.sleep(SETTLE)
     at = datetime.fromisoformat(row["generated_at"])
-    same = stack.api("/measurements", device_id=device, **{
+    same = stack.api("/api/measurements", device_id=device, **{
         "from": at.isoformat(), "to": (at + timedelta(microseconds=1)).isoformat()})  # fmt: skip
     assert [i["event_id"] for i in same["items"]] == [row["event_id"]]  # type: ignore[index]
 
 
 def test_three_times_are_kept_in_order(stack: Stack, observer: Observer) -> None:
-    rows = stack.api("/measurements", limit=200)["items"]  # type: ignore[index]
+    rows = stack.api("/api/measurements", limit=200)["items"]  # type: ignore[index]
     for row in rows:
         generated, received, stored = (datetime.fromisoformat(row[k]) for k in
                                        ("generated_at", "received_at", "stored_at"))  # fmt: skip
         assert generated <= received <= stored, row
-    stats = stack.api("/stats")
+    stats = stack.api("/api/stats")
     assert stats["measurements"] > 0 and stats["generated_to_stored_ms"] < 5000  # type: ignore[index]
 
 

@@ -99,14 +99,14 @@ def test_delivery_success_and_errors() -> None:
         httpx.ConnectError("refused"),
         httpx.Response(422, text="bad batch"),
     )
-    assert delivery.send("/ingest/measurements", BATCH).stored == 1
+    assert delivery.send("/api/ingest/measurements", BATCH).stored == 1
     assert json.loads(requests[0].content) == {"source": "ingestion", "items": []}
     with pytest.raises(RetryLaterError):
-        delivery.send("/ingest/measurements", BATCH)  # database down
+        delivery.send("/api/ingest/measurements", BATCH)  # database down
     with pytest.raises(RetryLaterError):
-        delivery.send("/ingest/measurements", BATCH)  # API down
+        delivery.send("/api/ingest/measurements", BATCH)  # API down
     with pytest.raises(BatchRejectedError):
-        delivery.send("/ingest/measurements", BATCH)  # retrying cannot help
+        delivery.send("/api/ingest/measurements", BATCH)  # retrying cannot help
 
 
 # Ingestion --------------------------------------------------------------------------------
@@ -156,9 +156,9 @@ def test_measurements_are_batched_and_delivered(measurement) -> None:
         m = measurement(sequence=seq)
         ing.handle(m.topic, m.to_payload())
     ing.handle("monitoring/v1/aquaculture/dissolved_oxygen/x", b"not json")  # counted, skipped
-    assert ing.deliver_once(ing.measurements, "/ingest/measurements")
+    assert ing.deliver_once(ing.measurements, "/api/ingest/measurements")
     path, batch = delivery.sent[0]
-    assert path == "/ingest/measurements" and len(batch.items) == 2
+    assert path == "/api/ingest/measurements" and len(batch.items) == 2
     assert batch.items[0].event["sequence"] == 1 and batch.items[0].received_at.tzinfo
     status = ing.status(MonitorState.ONLINE)
     assert status.client_id == "ingestion" and status.counters is not None
@@ -172,9 +172,9 @@ def test_unavailable_api_keeps_the_batch(measurement) -> None:
     ing = ingestion(delivery, batch_size=1)
     m = measurement()
     ing.handle(m.topic, m.to_payload())
-    assert not ing.deliver_once(ing.measurements, "/ingest/measurements")
+    assert not ing.deliver_once(ing.measurements, "/api/ingest/measurements")
     assert len(ing.measurements) == 1  # kept for the retry
-    assert ing.deliver_once(ing.measurements, "/ingest/measurements")
+    assert ing.deliver_once(ing.measurements, "/api/ingest/measurements")
     assert len(ing.measurements) == 0
     assert ing.status(MonitorState.ONLINE).delivery.api_errors == 1  # type: ignore[union-attr]
 

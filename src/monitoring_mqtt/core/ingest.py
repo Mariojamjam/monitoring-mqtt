@@ -2,8 +2,8 @@
 
 The consumer receives events from the broker and posts them to the API in batches::
 
-    POST /ingest/measurements   {"source": "...", "items": [{"received_at": ..., "event": {...}}]}
-    POST /ingest/alerts         same envelope; ``event`` is an alert event
+    POST /api/ingest/measurements  {"source": "...", "items": [{"received_at": …, "event": {…}}]}
+    POST /api/ingest/alerts        same envelope; ``event`` is an alert event
 
 ``event`` is exactly the MQTT payload (``core.models.Measurement`` or
 ``core.alerts.AlertEvent``); ``received_at`` is when the consumer got it from the broker.

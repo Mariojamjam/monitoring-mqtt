@@ -82,7 +82,7 @@ monitoring-mqtt stack logs monitor-poultry      # only poultry events, validated
 monitoring-mqtt stack logs monitor-cattle       # only cattle events, validated
 monitoring-mqtt tui                             # live view: publishers, broker, subscribers
 monitoring-mqtt stack workers                   # device workers registered in the broker
-curl -s http://127.0.0.1:8000/stats             # the stored history (reference: /docs)
+curl -s http://127.0.0.1:8000/api/stats             # the stored history (reference: /docs)
 monitoring-mqtt stack logs alerts               # alerts raised and cleared
 monitoring-mqtt test smoke                      # end-to-end check of the running stack
 monitoring-mqtt stack down

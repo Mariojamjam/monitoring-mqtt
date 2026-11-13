@@ -61,7 +61,7 @@ consumer buffered 189 measurements and stored all of them when it came back: 224
 device over the run, **no gap**, the oldest stored 311 s after it was generated.
 
 In normal operation an event reaches the database about 1 s after it was generated (the
-flush interval). `GET /stats` reports the current averages.
+flush interval). `GET /api/stats` reports the current averages.
 
 ## Schema
 

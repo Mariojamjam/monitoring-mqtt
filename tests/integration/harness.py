@@ -70,7 +70,7 @@ class Stack:
         """Every page of /measurements for these filters."""
         items, cursor = [], None
         while True:
-            page = self.api("/measurements", limit=1000, **params,
+            page = self.api("/api/measurements", limit=1000, **params,
                             **({"cursor": cursor} if cursor else {}))  # fmt: skip
             items += page["items"]  # type: ignore[index]
             cursor = page["next_cursor"]  # type: ignore[index]

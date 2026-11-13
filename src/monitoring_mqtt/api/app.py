@@ -16,14 +16,17 @@ from monitoring_mqtt.storage.settings import DatabaseSettings
 from monitoring_mqtt.storage.store import StorageUnavailableError, Store
 
 RETRY_AFTER_SECONDS = 2
+API_PREFIX = "/api"
 
 DESCRIPTION = """\
 History of the Monitoring MQTT lab. The API is the **only** component that talks to the
 database.
 
-- **Write side** (`/ingest`): the ingestion consumer posts batches of events it received
+- **Write side** (`/api/ingest`): the ingestion consumer posts batches of events it received
   from the broker. Every event is stored once (idempotent by id).
-- **Read side**: devices, measurements, alerts and runs, as JSON.
+- **Read side** (`/api/...`): devices, measurements, alerts and runs, as JSON.
+
+`/health` and `/ready` stay at the root, for container healthchecks.
 
 Lists are paginated with a cursor: pass `next_cursor` back as `cursor` to get the next
 page (`null` on the last one). Times are ISO 8601 with a time zone (UTC).
@@ -79,8 +82,10 @@ def create_app(store: object | None = None) -> FastAPI:
     async def invalid_cursor(request: Request, exc: InvalidCursorError) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
-    for router in (health.router, ingest.router, devices.router, measurements.router,
-                   alerts.router, runs.router):  # fmt: skip
-        app.include_router(router)
+    # Health stays at the root (container healthchecks); the API contract is under /api.
+    app.include_router(health.router)
+    for router in (ingest.router, devices.router, measurements.router, alerts.router,
+                   runs.router):  # fmt: skip
+        app.include_router(router, prefix=API_PREFIX)
     docs.install(app)
     return app

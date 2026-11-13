@@ -9,7 +9,7 @@ RUMEN_PH_HIGH = "rumen-ph-high"
 
 
 def alerts(stack: Stack, **params) -> list[dict]:
-    return stack.api("/alerts", limit=1000, **params)["items"]  # type: ignore[index]
+    return stack.api("/api/alerts", limit=1000, **params)["items"]  # type: ignore[index]
 
 
 def test_scheduled_anomaly_raises_and_clears_an_alert(stack: Stack, observer: Observer) -> None:
@@ -85,12 +85,12 @@ def test_open_alert_survives_an_engine_restart(stack: Stack, observer: Observer)
 
 
 def test_queries_reflect_the_run(stack: Stack, observer: Observer) -> None:
-    devices = {d["device_id"] for d in stack.api("/devices")["items"]}  # type: ignore[index]
+    devices = {d["device_id"] for d in stack.api("/api/devices")["items"]}  # type: ignore[index]
     assert set(observer.active()) <= devices
-    run = stack.api("/runs/it-run")
+    run = stack.api("/api/runs/it-run")
     assert run["measurements"] > 0 and run["alerts"] >= 2  # type: ignore[index]
     assert {d["domain"] for d in run["domains"]} == {"aquaculture", "poultry", "cattle"}  # type: ignore[index]
-    series = stack.api("/measurements/series", device_id=observer.active("cattle")[0],
+    series = stack.api("/api/measurements/series", device_id=observer.active("cattle")[0],
                        bucket="10s")  # fmt: skip
     assert series["points"] and all(p["min"] <= p["avg"] <= p["max"] for p in series["points"])  # type: ignore[index]
     assert stack.api_status("/docs") == 200
