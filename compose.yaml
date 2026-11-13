@@ -215,3 +215,15 @@ services:
       <<: *mqtt-env
       MQTT_CLEAN_SESSION: "true"
       SMOKE_TIMEOUT_SECONDS: ${SMOKE_TIMEOUT_SECONDS:-10}
+
+  # One-off live command to one device, run by `monitoring-mqtt device ...`. The worker
+  # hosting the device acknowledges it through the broker.
+  control:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    entrypoint: ["python", "-m", "monitoring_mqtt.tools.control"]
+    environment:
+      <<: *mqtt-env
+      MQTT_CLEAN_SESSION: "true"
+      CONTROL_TIMEOUT_SECONDS: ${CONTROL_TIMEOUT_SECONDS:-5}
