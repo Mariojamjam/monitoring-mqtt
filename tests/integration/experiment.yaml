@@ -1,6 +1,7 @@
 # Experiment used by the integration tests: fast publications and fast failure detection,
 # so recovery scenarios take seconds. Several workers per type, fan-out and every monitor
-# kind, plus one scheduled anomaly to check the simulation ground truth.
+# kind, plus one scheduled anomaly to check the simulation ground truth and the alerts;
+# history (PostgreSQL, API, ingestion) and the alert engine with the shipped rules.
 schema_version: 1
 
 run:
@@ -27,6 +28,13 @@ monitors:
   poultry: {replicas: 2}
   cattle: {replicas: 1}
   all: {replicas: 1}
+
+storage:
+  enabled: true
+  flush_interval: 200ms
+
+alerts:
+  enabled: true
 
 behavior:
   faults:

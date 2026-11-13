@@ -43,16 +43,18 @@ def stack() -> Iterator[Stack]:
         **os.environ,
         PROJECT_OVERRIDE_VARIABLE: PROJECT,
         # Machine settings: one machine with every role, whatever the developer's .env says.
-        "STACK_ROLES": "broker,devices,monitors",
+        "STACK_ROLES": "broker,devices,monitors,storage,alerts",
         "MQTT_BROKER_HOST": "",
         "MQTT_BROKER_PORT": "",
         "MQTT_BIND_ADDRESS": "127.0.0.1",
         "MQTT_HOST_PORT": str(port),
         "NODE_NAME": "it",
+        "API_BIND_ADDRESS": "127.0.0.1",
+        "API_HOST_PORT": str(free_port()),
     }
     # In-process Compose calls (from the cli package) must also target the isolated stack.
     os.environ[PROJECT_OVERRIDE_VARIABLE] = PROJECT
-    stack = Stack(env, "127.0.0.1", port)
+    stack = Stack(env, "127.0.0.1", port, api_url=f"http://127.0.0.1:{env['API_HOST_PORT']}")
     joined = False
     try:
         up = stack.cli("stack", "up", "--build", "--config", str(EXPERIMENT))
@@ -61,6 +63,7 @@ def stack() -> Iterator[Stack]:
             me = socket.gethostname()
             joined = stack.docker("network", "connect", NETWORK, me).returncode == 0
             stack.host, stack.port = "broker", 1883
+            stack.api_url = "http://api:8000"
         yield stack
     finally:
         if joined:

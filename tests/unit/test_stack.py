@@ -24,6 +24,7 @@ HEALTHY_PS = (
     "device-aquaculture aaaaaa000001\ndevice-aquaculture bbbbbb000002\n"
     "device-poultry cccccc000003\n"
     "monitor-poultry dddddd000004\nmonitor-poultry eeeeee000005\n"
+    "postgres ffffff000006\napi ffffff000007\ningestion ffffff000008\nalerts ffffff000009\n"
 )
 
 
@@ -196,10 +197,32 @@ def test_unusable_project_fails_before_calling_docker(
     assert docker.calls == []
 
 
+def test_storage_and_alerts_must_run_once() -> None:
+    plan = StackPlan([], [])
+    problems = verify_stack(plan, {"postgres": ["a"], "api": ["b"], "ingestion": []})
+    assert problems == [
+        "ingestion: expected 1 container(s), found 0",
+        "alerts: expected 1 container(s), found 0",
+    ]
+
+
+def test_down_keeps_history_unless_asked(project: Path, monkeypatch) -> None:
+    docker = use_docker(monkeypatch, FakeDocker())
+    assert invoke(project, "down").exit_code == 0
+    assert "--volumes" not in docker.calls[-1][0]
+    assert invoke(project, "down", "--volumes", "--yes").exit_code == 0
+    assert "--volumes" in docker.calls[-1][0]
+    result = runner.invoke(app, ["--project-dir", str(project), "stack", "down", "--volumes"],
+                           input="n\n")  # fmt: skip
+    assert result.exit_code == 1 and len(docker.calls) == 2  # aborted: Docker not called
+
+
 def test_verify_stack_accepts_zero_replicas() -> None:
     plan = StackPlan(
         [ServicePlan("ph_bolus", "cattle", "device-cattle", 0, 1)],
         [MonitorPlan("all", "monitor-all", "monitoring/v1/#", 0)],
+        storage=False,
+        alerts=False,
     )
     assert verify_stack(plan, {"device-cattle": [], "monitor-all": []}) == []
 
@@ -209,6 +232,8 @@ def test_device_and_monitor_with_same_short_id_do_not_collide() -> None:
     plan = StackPlan(
         [ServicePlan("ph_bolus", "cattle", "device-cattle", 1, 1)],
         [MonitorPlan("cattle", "monitor-cattle", "monitoring/v1/cattle/#", 1)],
+        storage=False,
+        alerts=False,
     )
     running = {"device-cattle": ["abcdef000001"], "monitor-cattle": ["abcdef000002"]}
     assert verify_stack(plan, running) == []
@@ -267,6 +292,7 @@ def test_up_applies_alternative_experiment_file(stack_project: Path, monkeypatch
     experiment = stack_project / "pc-a.yaml"
     experiment.write_text(
         "schema_version: 1\nworkers:\n  ph_bolus: {replicas: 1, devices_per_worker: 4}\n"
+        "storage: {enabled: false}\nalerts: {enabled: false}\n"
     )
     docker = use_docker(monkeypatch, FakeDocker("device-cattle ffffff000001\n"))
     result = invoke(stack_project, "up", "--config", str(experiment))
@@ -275,6 +301,8 @@ def test_up_applies_alternative_experiment_file(stack_project: Path, monkeypatch
     assert env["DEVICE_CATTLE_DEVICES_PER_WORKER"] == "4"
     assert env["DEVICE_AQUACULTURE_REPLICAS"] == "0"
     assert "pc-a.yaml" in result.output
+    assert (env["STORAGE_REPLICAS"], env["ALERTS_REPLICAS"]) == ("0", "0")
+    assert "disabled in the experiment" in result.output
 
 
 def test_up_rejects_inconsistent_machine_settings(stack_project: Path, monkeypatch) -> None:

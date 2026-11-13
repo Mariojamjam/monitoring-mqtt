@@ -37,6 +37,13 @@ device_types:
     generator: {center: 6.3, noise: 0.3, minimum: 5.0, maximum: 7.5}
 """
 
+RULES_YAML = """\
+schema_version: 1
+rules:
+  - {id: oxygen-low, device_type: oxygen_probe, below: 4.0, after: 2, clear_at: 4.5}
+  - {id: ammonia-high, device_type: ammonia_sensor, above: 30.0, severity: critical}
+"""
+
 
 MACHINE_VARIABLES = (
     "STACK_ROLES",
@@ -68,6 +75,7 @@ def project(tmp_path: Path) -> Path:
     (tmp_path / "compose.yaml").write_text("services: {}\n")
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "devices.yaml").write_text(CATALOG_YAML)
+    (tmp_path / "config" / "alerts.yaml").write_text(RULES_YAML)
     return tmp_path
 
 

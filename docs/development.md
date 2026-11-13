@@ -89,7 +89,19 @@ monitoring-mqtt stack up --build   # build images, start, wait for healthchecks
 monitoring-mqtt stack status
 monitoring-mqtt stack logs broker
 monitoring-mqtt stack restart broker  # restart as is (same run id); see failures.md
-monitoring-mqtt stack down
+monitoring-mqtt stack down              # keeps the stored history; --volumes deletes it
+```
+
+With the `storage` role, `stack up` also runs PostgreSQL, the schema migrations, the API
+(`http://127.0.0.1:8000`, reference at `/docs`) and the ingestion consumer; see
+[storage.md](storage.md). To change the schema, edit `storage/schema.py` and add an Alembic
+migration (`storage/migrations/versions/`); an integration test fails if they differ.
+After changing a route or a response model, regenerate the API documents (a unit test
+checks them):
+
+```bash
+uv run python -m monitoring_mqtt.api.docs > docs/openapi.json
+uv run python -m monitoring_mqtt.api.docs --html > docs/api-reference.html
 ```
 
 `stack up` reads `config/simulation.yaml` (or the file given with `--config`), validates it
@@ -128,9 +140,10 @@ MQTT_HOST=127.0.0.1 PUBLISH_INTERVAL_SECONDS=1 uv run python -m monitoring_mqtt.
 
 | Kind | Where | Examples |
 |---|---|---|
-| Experiment | `config/simulation.yaml` (versioned) | run id, seed, log level, QoS, keepalive, clean session, reconnect backoff, publish interval, workers, monitors |
+| Experiment | `config/simulation.yaml` (versioned) | run id, seed, log level, QoS, keepalive, clean session, reconnect backoff, publish interval, workers, monitors, behaviour, storage, alerts |
+| Alert rules | `config/alerts.yaml` (versioned, baked into the image; `stack up` passes the experiment's rules as `ALERT_RULES`) | thresholds, severity, `after`, hysteresis |
 | Device catalog | `config/devices.yaml` (versioned, baked into the image) | types, domains, metrics, units, generators, normal bands, anomaly targets |
-| Machine | `.env` (git-ignored, from `.env.example`) | `STACK_ROLES`, `MQTT_BROKER_HOST`, `MQTT_BROKER_PORT`, `MQTT_BIND_ADDRESS`, `MQTT_HOST_PORT`, `NODE_NAME`, `SMOKE_TIMEOUT_SECONDS` |
+| Machine | `.env` (git-ignored, from `.env.example`) | `STACK_ROLES`, `MQTT_BROKER_HOST`, `MQTT_BROKER_PORT`, `MQTT_BIND_ADDRESS`, `MQTT_HOST_PORT`, `NODE_NAME`, `SMOKE_TIMEOUT_SECONDS`, `API_BIND_ADDRESS`, `API_HOST_PORT`, `POSTGRES_PASSWORD` |
 | Contract and internals | code (documented) | MQTT 3.1.1, port 1883, `retain=false`, topics, schema, validation limits |
 
 `monitoring-mqtt stack up` turns `config/simulation.yaml` into the environment variables
@@ -154,6 +167,12 @@ with `uv run`:
 | `DEVICES_CONFIG` | simulator | `config/devices.yaml` | no (the image uses `/app/config/devices.yaml`) |
 | `WORKER_ID` | simulator | first 6 characters of the hostname | no; never set it on a Compose worker service, because all its replicas would share it |
 | `MQTT_TOPIC_FILTER`, `MONITOR_NAME` | monitor | required, `monitor` | set per monitor service by Compose |
+| `SIMULATION_BEHAVIOR` | simulator | empty | `behavior`, as JSON |
+| `API_URL` | ingestion | `http://api:8000` | no (set by Compose) |
+| `INGEST_BATCH_SIZE`, `INGEST_FLUSH_INTERVAL_SECONDS`, `INGEST_BUFFER_LIMIT` | ingestion | `500`, `1`, `50000` | `storage.batch_size`, `.flush_interval`, `.buffer_limit` |
+| `ALERT_RULES` | alerts | empty: `ALERT_RULES_FILE` (`config/alerts.yaml`) | `alerts.rules`, loaded and validated, as JSON |
+| `DATABASE_URL` | api, migrate | `postgresql+psycopg://monitoring:monitoring@localhost:5432/monitoring` | no (Compose builds it from `POSTGRES_PASSWORD`) |
+| `API_PORT` | api | `8000` | no |
 | `SMOKE_TIMEOUT_SECONDS` | smoke | `10` | no (machine setting, `.env`) |
 | `SMOKE_TELEMETRY_WINDOW_SECONDS` | smoke | `15` | derived: 2 × publish interval + 5 s |
 | `SMOKE_REQUIRE_TELEMETRY` | smoke | `true` | no (`false` when this machine runs no devices) |
@@ -169,7 +188,7 @@ Invalid values stop the service at startup with exit code `2` and a clear messag
 monitoring-mqtt test unit              # unit tests (runs pytest in the project environment)
 monitoring-mqtt test unit -k topics    # extra arguments are passed to pytest
 monitoring-mqtt test smoke             # end-to-end check against the running stack
-monitoring-mqtt test integration       # integration suite on an isolated stack (Docker, ~2 min)
+monitoring-mqtt test integration       # integration suite on an isolated stack (Docker, ~5 min)
 ```
 
 `test unit` runs `uv run --frozen pytest tests/unit` in the project directory. `pytest`
@@ -204,9 +223,10 @@ keeps running untouched. The project name comes from the test-only variable
 `MONITORING_MQTT_COMPOSE_PROJECT`; never set it for normal use.
 
 The test experiment publishes every 0.5 s with a 5 s keepalive, so failures are detected
-in seconds and the whole suite takes about 2 minutes. The tests observe the system only
+in seconds and the whole suite takes about 5 minutes. The tests observe the system only
 through the broker, like any client: telemetry, the worker registry, each monitor's own
-status (what it received) and the simulation ground truth.
+status (what it received), the simulation ground truth and the alerts; and the history
+through the API.
 
 | File | Checks |
 |---|---|
@@ -216,6 +236,8 @@ status (what it received) and the simulation ground truth.
 | `test_4_behaviour.py` | A scheduled anomaly matches its ground truth and leaves the normal band; live `stop` (no gap, neighbour unaffected), `disconnect` (gap), `delay` (late, complete), `pause` (silence); rejected and unanswered commands |
 | `test_5_cli.py` | `stack workers`, `test smoke` and `stack restart` end to end |
 | `test_6_recovery.py` | Broker restart: everyone reconnects and receives again; network cut: the broker detects it by keepalive and the worker comes back |
+| `test_7_storage.py` | The migrated schema matches the code; everything the observer saw is stored; a repeated event is stored once; the three times are in order; API, database or ingestion consumer down for 5 s: nothing lost |
+| `test_8_alerts.py` | A scheduled anomaly raises and clears an alert within its ground truth episode; a live anomaly is alerted and stored; no alert without anomaly; an open alert survives an engine restart; the queries reflect the run |
 
 Inside the Dev Container, whose `localhost` is not the host's, the tests join the test
 network and reach the broker as `broker:1883`. Set `IT_KEEP_STACK=1` to keep the test stack
@@ -255,6 +277,9 @@ src/monitoring_mqtt/
 │   ├── models.py        # Measurement payload model (Pydantic)
 │   ├── registry.py      # worker registry contract (claim topic and payload)
 │   ├── simulation.py    # simulation plane: ground truth events, device commands
+│   ├── alerts.py        # alert contract: events and active state topics
+│   ├── ingest.py        # HTTP ingestion batches (consumer → API)
+│   ├── durations.py     # "30s", "2m"… parsing
 │   ├── status.py        # observability plane: monitor status topic and payload
 │   ├── config.py        # environment configuration
 │   ├── mqtt.py          # Paho client factory, reconnection
@@ -274,7 +299,24 @@ src/monitoring_mqtt/
 │   ├── registration.py  # claims the worker id in the broker registry
 │   └── generators/      # mean-reverting and bounded-noise generators (steerable)
 ├── consumers/
-│   └── monitor.py       # generic monitor (entrypoint)
+│   ├── monitor.py       # generic monitor (entrypoint)
+│   ├── ingestion.py     # MQTT → API bridge (entrypoint): persistent session, batches
+│   ├── buffer.py        # bounded buffer that hands out batches
+│   ├── delivery.py      # HTTP delivery with retries (httpx)
+│   ├── rules.py         # alert rules (YAML) and their evaluation (pure)
+│   └── alerts.py        # alert engine (entrypoint): restore, evaluate, publish
+├── storage/             # only the API (and migrate) import it
+│   ├── schema.py        # tables (SQLAlchemy Core)
+│   ├── migrations/      # Alembic, configured in code (migrate.py)
+│   ├── migrate.py       # migrate service entrypoint
+│   ├── writes.py        # idempotent writes (ON CONFLICT)
+│   ├── queries.py       # read side, cursor pagination
+│   └── store.py         # facade used by the API; outages → StorageUnavailableError
+├── api/                 # FastAPI
+│   ├── app.py           # application factory, 503 handling
+│   ├── routes/          # health, ingest, devices, measurements, alerts, runs
+│   ├── schemas.py       # response models
+│   └── docs.py          # Scalar reference (/docs), OpenAPI export
 ├── testing/
 │   └── smoke.py         # end-to-end smoke check (runs as the `smoke` service)
 ├── tui/                 # read-only terminal UI (Textual)

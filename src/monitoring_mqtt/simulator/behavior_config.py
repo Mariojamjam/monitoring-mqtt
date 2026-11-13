@@ -21,56 +21,22 @@ from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
-    PlainSerializer,
     field_validator,
 )
 
+from monitoring_mqtt.core.durations import (
+    Duration,
+    Offset,
+    format_duration,
+    human_duration,
+    parse_duration,
+    parse_offset,
+)
 from monitoring_mqtt.core.simulation import EpisodeKind
 
-_DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)\s*$")
-_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
 DEVICE_PATTERN_RE = re.compile(r"^[a-z0-9*?_\-\[\]]+$")
-
-
-def _seconds(value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, str):
-        raise ValueError(f"write a duration with a unit, e.g. '30s' or '2m' (got {value!r})")
-    match = _DURATION_RE.match(value)
-    if not match:
-        if re.fullmatch(r"\s*\d+(\.\d+)?\s*", value):
-            raise ValueError(
-                f"add a unit to {value!r}, e.g. '{value.strip()}s' or '{value.strip()}m'"
-            )
-        raise ValueError(f"invalid duration {value!r}: use e.g. '500ms', '30s', '2m' or '1h'")
-    return float(match.group(1)) * _UNIT_SECONDS[match.group(2)]
-
-
-def parse_duration(value: object) -> float:
-    """``"30s"`` → 30.0. Bare numbers are rejected: the unit must be explicit."""
-    seconds = _seconds(value)
-    if seconds <= 0:
-        raise ValueError(f"duration {value!r} must be greater than zero")
-    return seconds
-
-
-def parse_offset(value: object) -> float:
-    """A time after the start, like a duration but ``0s`` (right away) is allowed."""
-    return _seconds(value)
-
-
-def format_duration(seconds: float) -> str:
-    return f"{seconds:g}s"
-
-
-Duration = Annotated[
-    float, BeforeValidator(parse_duration), PlainSerializer(format_duration, return_type=str)
-]
-Offset = Annotated[
-    float, BeforeValidator(parse_offset), PlainSerializer(format_duration, return_type=str)
-]
 
 
 UNSTABLE_KINDS = (EpisodeKind.PAUSE, EpisodeKind.DELAY, EpisodeKind.DISCONNECT)
@@ -169,13 +135,16 @@ class BehaviorConfig(_Section):
         return names
 
 
-def human_duration(seconds: float) -> str:
-    for unit, size in (("h", 3600.0), ("m", 60.0), ("s", 1.0)):
-        if seconds >= size and (seconds / size).is_integer():
-            return f"{int(seconds / size)}{unit}"
-    return f"{seconds:g}s"
-
-
 def _episodes(name: str, every: float, lasts: float, what: str, only: list[str] | None) -> str:
     text = f"{name} every {human_duration(every)} for {human_duration(lasts)} ({what})"
     return text + (f" on {', '.join(only)}" if only else "")
+
+
+__all__ = [
+    "Duration",
+    "Offset",
+    "format_duration",
+    "human_duration",
+    "parse_duration",
+    "parse_offset",
+]

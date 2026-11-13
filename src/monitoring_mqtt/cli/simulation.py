@@ -27,6 +27,9 @@ from typing import Annotated, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from monitoring_mqtt.consumers.rules import RulesError, RulesFile, load_rules
+from monitoring_mqtt.core.durations import Duration
+from monitoring_mqtt.core.ingest import MAX_BATCH_ITEMS
 from monitoring_mqtt.core.topics import ALL_TELEMETRY_FILTER, domain_filter
 from monitoring_mqtt.simulator.behavior_config import BehaviorConfig
 from monitoring_mqtt.simulator.catalog import CatalogError, DeviceCatalog, load_catalog
@@ -93,6 +96,22 @@ class MonitorGroup(_Section):
     replicas: Annotated[int, Field(ge=0, le=MAX_REPLICAS)]
 
 
+class StorageSection(_Section):
+    """History: PostgreSQL, the API and the ingestion consumer (MQTT → API)."""
+
+    enabled: bool = True
+    batch_size: Annotated[int, Field(ge=1, le=MAX_BATCH_ITEMS)] = 500
+    flush_interval: Duration = 1.0
+    buffer_limit: Annotated[int, Field(ge=1, le=10_000_000)] = 50_000
+
+
+class AlertsSection(_Section):
+    """The alert engine and its rules file (relative to the project directory)."""
+
+    enabled: bool = True
+    rules: str = "config/alerts.yaml"
+
+
 class SimulationFile(_Section):
     schema_version: Literal[1]
     run: RunSection = Field(default_factory=RunSection)
@@ -101,6 +120,8 @@ class SimulationFile(_Section):
     workers: dict[str, WorkerGroup]
     monitors: dict[str, MonitorGroup] = Field(default_factory=dict)
     behavior: BehaviorConfig = Field(default_factory=BehaviorConfig)
+    storage: StorageSection = Field(default_factory=StorageSection)
+    alerts: AlertsSection = Field(default_factory=AlertsSection)
 
 
 @dataclass(frozen=True)
@@ -140,12 +161,18 @@ class MonitorPlan:
 class StackPlan:
     workers: list[ServicePlan]
     monitors: list[MonitorPlan]
+    storage: bool = True  # postgres, migrate, api, ingestion
+    alerts: bool = True  # alert engine
 
-    def limited_to(self, *, devices: bool, monitors: bool) -> StackPlan:
+    def limited_to(
+        self, *, devices: bool, monitors: bool, storage: bool = True, alerts: bool = True
+    ) -> StackPlan:
         """The plan for one machine: services of roles it does not run get 0 replicas."""
         return StackPlan(
             [w if devices else replace(w, replicas=0) for w in self.workers],
             [m if monitors else replace(m, replicas=0) for m in self.monitors],
+            storage=self.storage and storage,
+            alerts=self.alerts and alerts,
         )
 
 
@@ -158,6 +185,9 @@ class Simulation:
     devices: DevicesSection
     plan: StackPlan
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
+    storage: StorageSection = field(default_factory=StorageSection)
+    alerts: AlertsSection = field(default_factory=AlertsSection)
+    rules: RulesFile | None = None  # loaded when alerts are enabled
     source: Path = SIMULATION_FILE  # shown to the user; relative to the project when possible
 
 
@@ -244,6 +274,25 @@ def check_behavior(behavior: BehaviorConfig, catalog: DeviceCatalog) -> None:
         )
 
 
+def load_alert_rules(
+    project_root: Path, section: AlertsSection, catalog: DeviceCatalog
+) -> RulesFile:
+    """The rules file, checked against the device catalog."""
+    path = Path(section.rules)
+    path = path if path.is_absolute() else project_root / path
+    try:
+        rules = load_rules(path)
+    except RulesError as exc:
+        raise SimulationError(str(exc)) from exc
+    known = {t.name for t in catalog.device_types}
+    unknown = sorted(rules.device_types() - known)
+    if unknown:
+        raise SimulationError(
+            f"{section.rules}: unknown device type(s) {unknown}; valid types: {sorted(known)}"
+        )
+    return rules
+
+
 def simulation_path(project_root: Path, config: Path | None = None) -> Path:
     """The experiment file: ``config`` (relative to the working directory) or the default."""
     return config.expanduser().resolve() if config else project_root / SIMULATION_FILE
@@ -266,14 +315,23 @@ def load_simulation(project_root: Path, config: Path | None = None) -> Simulatio
         raise SimulationError(f"invalid simulation config {path}: {exc}") from exc
     except CatalogError as exc:
         raise SimulationError(str(exc)) from exc
-    plan = StackPlan(build_plan(sim, catalog), build_monitor_plan(sim, catalog))
+    plan = StackPlan(
+        build_plan(sim, catalog),
+        build_monitor_plan(sim, catalog),
+        storage=sim.storage.enabled,
+        alerts=sim.alerts.enabled,
+    )
     check_behavior(sim.behavior, catalog)
+    rules = load_alert_rules(project_root, sim.alerts, catalog) if sim.alerts.enabled else None
     return Simulation(
         run=sim.run,
         mqtt=sim.mqtt,
         devices=sim.devices,
         plan=plan,
         behavior=sim.behavior,
+        storage=sim.storage,
+        alerts=sim.alerts,
+        rules=rules,
         source=_display_path(project_root, path),
     )
 
@@ -324,6 +382,12 @@ def compose_env(sim: Simulation, run_id: str) -> dict[str, str]:
         "SIMULATION_SEED": str(sim.run.seed),
         "PUBLISH_INTERVAL_SECONDS": _number(sim.devices.publish_interval_seconds),
         "SIMULATION_BEHAVIOR": sim.behavior.to_env(),
+        "STORAGE_REPLICAS": "1" if sim.plan.storage else "0",
+        "INGEST_BATCH_SIZE": str(sim.storage.batch_size),
+        "INGEST_FLUSH_INTERVAL_SECONDS": _number(sim.storage.flush_interval),
+        "INGEST_BUFFER_LIMIT": str(sim.storage.buffer_limit),
+        "ALERTS_REPLICAS": "1" if sim.plan.alerts else "0",
+        "ALERT_RULES": sim.rules.to_env() if sim.rules else "",
     }
     for worker in sim.plan.workers:
         env[f"{worker.env_prefix}_REPLICAS"] = str(worker.replicas)

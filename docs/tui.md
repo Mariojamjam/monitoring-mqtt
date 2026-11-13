@@ -21,6 +21,7 @@ comes from the broker:
 | Monitor status | `monitoring/status/v1/monitors/+` | Who consumes: subscribed filter, machine, counters, the latest messages it received, online/offline/stopped |
 | Broker statistics | `$SYS/broker/#` | Mosquitto version, uptime, clients, publish rates |
 | Simulation ground truth | `monitoring/sim/v1/devices/+` | Episodes in effect per device: anomaly, pause, delay, disconnect, stop |
+| Alerts | `monitoring/alerts/v1/#` | Open alerts (retained active state) and every alert raised or cleared |
 
 MQTT cannot list subscribers, so the UI learns about consumers from the status that each
 monitor publishes (see [mqtt-contract.md](mqtt-contract.md#observability-plane)): the topic
@@ -44,13 +45,28 @@ counts itself among the monitors.
 | Key | Screen | Shows |
 |---|---|---|
 | `1` | Overview | Machines → workers → devices with their latest value, trend and number of consumers; the broker summary; machines → monitor kinds with the filter they subscribe to → replicas, each with its rate, received count and the last message it received (`← device value #seq age`); per-domain flow over the last 60 s and where it is routed |
-| `2` | Devices | One row per device: state, type, domain, machine, worker, site, value (red outside the type's normal band), mode (simulated episodes in effect, e.g. `stop`, `anomaly ↑`), trend, sequence, rate, missing messages, last seen, number of consumers. `Enter` opens the device with its last payload and the monitors that receive it |
-| `3` | Monitors | One row per monitor: state, filter, machine, rate, received, invalid, devices seen, latency, uptime. Below, the selected monitor: the filter it subscribes to, its counters per domain and the last 10 messages it received (time, topic, value, sequence, the publisher's latest sequence, latency). `Enter` opens its raw status |
-| `4` | Events | System changes: workers joining and leaving, monitors online/stopped/offline, broker connection, sequence gaps, restarts, invalid messages, simulated episodes starting and ending. `t` also includes every telemetry message |
+| `2` | Devices | One row per device: state, type, domain, machine, worker, site, value (red outside the type's normal band), mode (simulated episodes in effect and open alerts, e.g. `anomaly ↑  alert critical`: the cause next to the detection), trend, sequence, rate, missing messages, last seen, number of consumers. `Enter` opens the device with its last payload and the monitors that receive it |
+| `3` | Monitors | One row per subscriber that reports its status: the monitors, the ingestion consumer and the alert engine. Columns: state, filter, machine, rate, received, invalid, devices seen, latency, uptime. Below, the selected one: the filter it subscribes to, its counters per domain, the last 10 messages it received (time, topic, value, sequence, the publisher's latest sequence, latency) and, for the ingestion consumer, where the events went (stored, duplicates, buffered, dropped, API errors) or, for the alert engine, its open, raised and cleared alerts. `Enter` opens its raw status |
+| `4` | Events | System changes: workers joining and leaving, monitors online/stopped/offline, broker connection, sequence gaps, restarts, invalid messages, simulated episodes starting and ending, alerts raised and cleared. `t` also includes every telemetry message |
 | `5` | Broker | Mosquitto statistics and the history of observed and broker publish rates |
 
-Other keys: `/` filters the Devices or Events table, `p` pauses the Events table, `h` hides
-stopped and offline monitors and departed workers, `Esc` closes a detail or leaves a filter.
+The header also shows `stored N` (events stored by the ingestion consumer) and the number
+of open alerts, critical ones in red. `a` lists the open alerts.
+
+**`P` opens the menu**, the only key shown at the bottom of the screen. It lists every
+action with its shortcut; type to search it, `Enter` runs it, `Esc` closes it. The shortcuts
+also work directly:
+
+| Key | Action |
+|---|---|
+| `1`–`5` | Overview, Devices, Monitors, Events, Broker |
+| `a` | Open alerts |
+| `/` | Filter the Devices or Events table (`Esc` leaves the filter) |
+| `space` | Pause or resume the Events table |
+| `t` | Include every telemetry message in Events |
+| `h` | Hide stopped and offline monitors and departed workers |
+| `Enter` | Detail of the selected device or monitor (`Esc` closes it) |
+| `q` | Quit; the stack keeps running |
 
 States:
 
@@ -91,6 +107,8 @@ detection times and data loss for the failure scenarios are in [failures.md](fai
 | Anomalies | `stack up -c config/examples/anomalies.yaml` | Values turn red as they leave the normal band; Mode shows `anomaly ↑`/`↓`; Events lists each start and end |
 | One device off | `monitoring-mqtt device stop <id> --for 30s` | Mode `stop`, the device turns ◐ stale; its neighbours keep publishing; no gap when it returns |
 | Unstable devices | `stack up -c config/examples/unstable.yaml` | `pause` (silence, no gap), `delay` (late burst, high latency), `disconnect` (gap in Missing) |
+| Alerts | `stack up -c config/examples/alerts-demo.yaml` | `anomaly ↑` and then `alert warning` / `alert critical` on the same device; `alerts N` in the header; `a` lists them |
+| API down | `docker stop monitoring-mqtt-api-1` | The ingestion consumer's `buffered` and `API errors` grow; after `docker start`, `buffered` drains to 0 and `stored` catches up |
 | Lagging consumer | any monitor | In its received list, "Publisher at" shows how far the publisher has moved since each message (`16 (+2)`) |
 
 ## Requirements

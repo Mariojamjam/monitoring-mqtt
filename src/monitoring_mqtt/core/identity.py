@@ -23,3 +23,10 @@ def host_short_id(hostname: str | None = None) -> str:
     replica without a fixed ``container_name``.
     """
     return sanitize_segment(hostname or socket.gethostname())[:HOST_ID_LENGTH]
+
+
+def worker_of(device_id: str, domain: str) -> str:
+    """``{domain}-{worker_id}-{index}`` → ``worker_id`` (the domain is known)."""
+    prefix = f"{domain}-"
+    body = device_id[len(prefix) :] if device_id.startswith(prefix) else device_id
+    return body.rsplit("-", 1)[0] if "-" in body else body

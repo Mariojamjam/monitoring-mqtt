@@ -21,10 +21,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 
 from monitoring_mqtt.cli import compose
+from monitoring_mqtt.core.alerts import ALERT_EVENTS_FILTER, AlertEvent
 from monitoring_mqtt.core.registry import WORKER_CLAIMS_FILTER, WorkerClaim
 from monitoring_mqtt.core.simulation import SIM_EVENTS_FILTER, SimEvent
 from monitoring_mqtt.core.status import MONITOR_STATUS_FILTER, MonitorStatus
@@ -50,6 +52,30 @@ class Stack:
     env: dict[str, str]
     host: str
     port: int
+    api_url: str = ""
+
+    def api(self, path: str, **params) -> dict | list:
+        """GET a JSON document from the API of the test stack."""
+        response = httpx.get(f"{self.api_url}{path}", params=params, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def api_status(self, path: str) -> int:
+        try:
+            return httpx.get(f"{self.api_url}{path}", timeout=5).status_code
+        except httpx.HTTPError:
+            return 0
+
+    def all_measurements(self, **params) -> list[dict]:
+        """Every page of /measurements for these filters."""
+        items, cursor = [], None
+        while True:
+            page = self.api("/api/measurements", limit=1000, **params,
+                            **({"cursor": cursor} if cursor else {}))  # fmt: skip
+            items += page["items"]  # type: ignore[index]
+            cursor = page["next_cursor"]  # type: ignore[index]
+            if not cursor:
+                return items
 
     def cli(self, *args: str, timeout: float = 600) -> subprocess.CompletedProcess[str]:
         command = [sys.executable, "-m", "monitoring_mqtt.cli.main", "--project-dir", str(ROOT)]
@@ -102,6 +128,7 @@ class Observer:
     statuses: dict[str, MonitorStatus | None] = field(default_factory=dict)
     claims: dict[str, WorkerClaim | None] = field(default_factory=dict)
     sim: list[SimEvent] = field(default_factory=list)
+    alerts: list[AlertEvent] = field(default_factory=list)
     connects: int = 0
 
     def __post_init__(self) -> None:
@@ -131,7 +158,7 @@ class Observer:
             self.connects += 1
         client.subscribe(
             [(ALL_TELEMETRY_FILTER, 1), (WORKER_CLAIMS_FILTER, 1), (MONITOR_STATUS_FILTER, 1),
-             (SIM_EVENTS_FILTER, 1)]
+             (SIM_EVENTS_FILTER, 1), (ALERT_EVENTS_FILTER, 1)]
         )  # fmt: skip
 
     def _on_message(self, client, userdata, message: mqtt.MQTTMessage) -> None:
@@ -158,6 +185,8 @@ class Observer:
                 self.statuses[monitor] = MonitorStatus.from_payload(payload) if payload else None
             elif "/sim/" in topic:
                 self.sim.append(SimEvent.from_payload(payload))
+            elif "/alerts/" in topic:
+                self.alerts.append(AlertEvent.from_payload(payload))
 
     # Queries -------------------------------------------------------------------------
 

@@ -21,6 +21,7 @@ HEADER = "schema_version: 1\nworkers:\n"
 def project_with(tmp_path: Path, topology: str) -> Path:
     (tmp_path / "config").mkdir()
     shutil.copy(REPO / "config" / "devices.yaml", tmp_path / "config" / "devices.yaml")
+    shutil.copy(REPO / "config" / "alerts.yaml", tmp_path / "config" / "alerts.yaml")
     (tmp_path / "config" / "simulation.yaml").write_text(topology)
     return tmp_path
 

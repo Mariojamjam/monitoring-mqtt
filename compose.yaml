@@ -33,6 +33,10 @@ x-mqtt-env: &mqtt-env
   # Machine label shown by observers (worker claims, monitor status); set by the CLI.
   NODE_NAME: ${NODE_NAME:-}
 
+# The API and the migrations reach the database by its service name.
+x-database-env: &database-env
+  DATABASE_URL: postgresql+psycopg://monitoring:${POSTGRES_PASSWORD:-monitoring}@postgres:5432/monitoring
+
 x-simulation-env: &simulation-env
   RUN_ID: ${RUN_ID:-}
   PUBLISH_INTERVAL_SECONDS: ${PUBLISH_INTERVAL_SECONDS:-5}
@@ -149,6 +153,95 @@ services:
       MONITOR_NAME: all
       MQTT_TOPIC_FILTER: monitoring/v1/#
 
+  # Storage (role `storage`, experiment `storage.enabled`): PostgreSQL behind the API.
+  # Only the API talks to the database; the ingestion consumer bridges MQTT to the API.
+  # The database is not published on the host. Its data survives `stack down`
+  # (volume pgdata); `stack down --volumes` deletes it.
+  postgres:
+    image: postgres:18.7-alpine
+    restart: unless-stopped
+    deploy:
+      replicas: ${STORAGE_REPLICAS:-1}
+    environment:
+      POSTGRES_USER: monitoring
+      POSTGRES_DB: monitoring
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-monitoring}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "monitoring", "-d", "monitoring"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+      start_interval: 1s
+
+  # Applies the schema migrations, then exits; the API starts only after it succeeded.
+  migrate:
+    <<: *app
+    restart: "no"
+    deploy:
+      replicas: ${STORAGE_REPLICAS:-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "-m", "monitoring_mqtt.storage.migrate"]
+    environment:
+      <<: *database-env
+
+  api:
+    <<: *app
+    deploy:
+      replicas: ${STORAGE_REPLICAS:-1}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "monitoring_mqtt.api"]
+    ports:
+      # Loopback only by default (API_BIND_ADDRESS / API_HOST_PORT in .env).
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-8000}:8000"
+    environment:
+      <<: *database-env
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
+
+  # MQTT → API bridge. Fixed client id with a persistent session: one replica at most.
+  ingestion:
+    <<: *app
+    deploy:
+      replicas: ${STORAGE_REPLICAS:-1}
+    depends_on:
+      broker:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["python", "-m", "monitoring_mqtt.consumers.ingestion"]
+    environment:
+      <<: *mqtt-env
+      API_URL: http://api:8000
+      INGEST_BATCH_SIZE: ${INGEST_BATCH_SIZE:-500}
+      INGEST_FLUSH_INTERVAL_SECONDS: ${INGEST_FLUSH_INTERVAL_SECONDS:-1}
+      INGEST_BUFFER_LIMIT: ${INGEST_BUFFER_LIMIT:-50000}
+
+  # Alert engine (role `alerts`, experiment `alerts.enabled`): applies the rules to every
+  # measurement and publishes alerts on monitoring/alerts/v1/... Fixed client id with a
+  # persistent session: one replica at most.
+  alerts:
+    <<: *app
+    deploy:
+      replicas: ${ALERTS_REPLICAS:-1}
+    command: ["python", "-m", "monitoring_mqtt.consumers.alerts"]
+    environment:
+      <<: *mqtt-env
+      # The experiment's rules as JSON (set by `stack up`); empty = config/alerts.yaml.
+      ALERT_RULES: ${ALERT_RULES:-}
+
   # Forwards host.docker.internal:<port> to a tunnel listening on this machine's loopback
   # (MQTT_BROKER_HOST=127.0.0.1). Only needed with Docker Engine on Linux, where containers
   # cannot reach the host's loopback; `stack up` sets the replicas and the listen address
@@ -227,3 +320,7 @@ services:
       <<: *mqtt-env
       MQTT_CLEAN_SESSION: "true"
       CONTROL_TIMEOUT_SECONDS: ${CONTROL_TIMEOUT_SECONDS:-5}
+
+volumes:
+  # PostgreSQL data: the stored history.
+  pgdata:
