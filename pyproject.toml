@@ -1,6 +1,6 @@
 [project]
 name = "monitoring-mqtt"
-version = "0.1.0"
+version = "0.2.0"
 description = "Publish/Subscribe lab simulating chemical-monitoring IoT devices over MQTT."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
