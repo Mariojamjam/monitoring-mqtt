@@ -46,7 +46,10 @@ def test_defaults_are_the_single_machine_stack() -> None:
         "RELAY_LISTEN_HOST": "",
         "RELAY_TARGET_HOST": "127.0.0.1",
         "RELAY_PORT": "1883",
+        "API_BIND_ADDRESS": "127.0.0.1",
+        "API_HOST_PORT": "8000",
     }
+    assert machine.api_url == "http://127.0.0.1:8000"
 
 
 def test_broker_only_machine_exposed_to_the_network() -> None:

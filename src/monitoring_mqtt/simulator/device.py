@@ -56,6 +56,13 @@ class VirtualDevice:
     def stop(self) -> None:
         mqtt_helpers.stop(self.client)
 
+    def go_offline(self) -> None:
+        """Disconnect (a simulated stop or disconnection); the worker keeps running."""
+        mqtt_helpers.stop(self.client)
+
+    def go_online(self) -> None:
+        mqtt_helpers.start(self.client, self.settings)
+
     @property
     def connected(self) -> bool:
         return self.client.is_connected()
@@ -76,7 +83,10 @@ class VirtualDevice:
 
     def publish_next(self) -> Measurement | None:
         """Generate and publish one measurement; return it if handed to the client."""
-        measurement = self.next_measurement()
+        return self.publish(self.next_measurement())
+
+    def publish(self, measurement: Measurement) -> Measurement | None:
+        """Publish an already generated measurement; return it if handed to the client."""
         fields = kv(device_id=self.device_id, seq=measurement.sequence)
         if not self.client.is_connected():
             logger.warning("measurement dropped, broker unavailable %s", fields)

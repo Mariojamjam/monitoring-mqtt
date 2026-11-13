@@ -21,6 +21,7 @@ from monitoring_mqtt.cli.stack import (
 
 SMOKE_SERVICE = "smoke"
 UNIT_TESTS = "tests/unit"
+INTEGRATION_TESTS = "tests/integration"
 
 app = typer.Typer(help="Run automated tests.", no_args_is_help=True)
 console = Console()
@@ -38,24 +39,44 @@ def _project_root(ctx: typer.Context) -> Path:
         raise typer.Exit(code=2) from exc
 
 
-def unit_command(extra: list[str]) -> list[str]:
+def pytest_command(suite: str, extra: list[str]) -> list[str]:
     # Development dependencies (pytest) live in the project environment, not in the
-    # installed CLI, so the suite always runs through uv with the locked versions.
-    return ["uv", "run", "--frozen", "pytest", UNIT_TESTS, *extra]
+    # installed CLI, so the suites always run through uv with the locked versions.
+    return ["uv", "run", "--frozen", "pytest", suite, *extra]
 
 
-@app.command(context_settings=PASSTHROUGH)
-def unit(ctx: typer.Context) -> None:
-    """Run the unit tests (extra arguments go to pytest, e.g. -k topics)."""
+def unit_command(extra: list[str]) -> list[str]:
+    return pytest_command(UNIT_TESTS, extra)
+
+
+def _run_pytest(ctx: typer.Context, suite: str) -> None:
     root = _project_root(ctx)
     try:
-        code = subprocess.run(unit_command(list(ctx.args)), cwd=root, check=False).returncode
+        command = pytest_command(suite, list(ctx.args))
+        code = subprocess.run(command, cwd=root, check=False).returncode
     except FileNotFoundError as exc:
         err_console.print(
             "[red]error:[/red] uv not found. Run 'python scripts/bootstrap.py' or install uv."
         )
         raise typer.Exit(code=compose.DOCKER_NOT_FOUND_EXIT) from exc
     raise typer.Exit(code=code)
+
+
+@app.command(context_settings=PASSTHROUGH)
+def unit(ctx: typer.Context) -> None:
+    """Run the unit tests (extra arguments go to pytest, e.g. -k topics)."""
+    _run_pytest(ctx, UNIT_TESTS)
+
+
+@app.command(context_settings=PASSTHROUGH)
+def integration(ctx: typer.Context) -> None:
+    """Run the integration tests against an isolated stack (needs Docker; about 2 min).
+
+    The tests build the images and start their own stack, Compose project
+    monitoring-mqtt-it, on a free local port; it is removed at the end. Your stack keeps
+    running untouched. Extra arguments go to pytest, e.g. -k recovery.
+    """
+    _run_pytest(ctx, INTEGRATION_TESTS)
 
 
 @app.command()

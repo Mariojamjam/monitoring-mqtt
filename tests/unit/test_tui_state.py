@@ -5,6 +5,7 @@ import pytest
 from tui_messages import E0, T0, claim, status, telemetry
 
 from monitoring_mqtt.core.models import Measurement
+from monitoring_mqtt.core.simulation import EpisodeKind, EpisodePhase, EpisodeSource, SimEvent
 from monitoring_mqtt.core.status import (
     MonitorState,
     MonitorStatus,
@@ -13,6 +14,7 @@ from monitoring_mqtt.core.status import (
 )
 from monitoring_mqtt.tui.feed import subscriptions
 from monitoring_mqtt.tui.state import (
+    Band,
     Connection,
     EventKind,
     Health,
@@ -38,6 +40,8 @@ def test_observer_subscribes_to_every_plane() -> None:
         "monitoring/v1/#",
         "monitoring/registry/v1/workers/+",
         "monitoring/status/v1/monitors/+",
+        "monitoring/sim/v1/devices/+",
+        "monitoring/alerts/v1/#",
         "$SYS/broker/#",
     ]
 
@@ -206,3 +210,68 @@ def test_monitor_restart_resets_rate_baseline(state: SystemState) -> None:
     state.apply(restarted)
     assert state.monitors["monitor-poultry-000001"].rate == 0.0  # not a negative delta
     assert state.notable[-1].text.endswith("(restarted)")
+
+
+def sim(device_id: str, kind: str, phase: str, at: float, **extra) -> Message:
+    event = SimEvent(
+        run_id="lab-01", worker_id="fc5336", device_id=device_id, kind=EpisodeKind(kind),
+        phase=EpisodePhase(phase), source=EpisodeSource.FAULT, **extra,
+    )  # fmt: skip
+    return Message(event.topic, event.to_payload(), at)
+
+
+def test_simulated_episodes_and_normal_band() -> None:
+    state = SystemState(5.0, bands={"poultry_type": Band(0.0, 25.0)})
+    device_id = "poultry-fc5336-001"
+    state.apply_all(
+        [
+            claim("fc5336"),
+            telemetry(device_id, 1, E0, value=40),
+            sim(device_id, "anomaly", "start", E0 + 1, direction="high"),
+            sim(device_id, "stop", "start", E0 + 2),
+        ]
+    )
+    device = state.devices[device_id]
+    assert state.out_of_range(device) is True
+    assert [e.kind for e in state.mode_of(device_id).active] == [
+        EpisodeKind.STOP,
+        EpisodeKind.ANOMALY,
+    ]
+    assert state.notable[-1].kind is EventKind.SIMULATED
+    assert state.notable[-1].text == "stop started (fault)"
+
+    state.apply(sim(device_id, "stop", "end", E0 + 3))
+    assert [e.kind for e in state.mode_of(device_id).active] == [EpisodeKind.ANOMALY]
+    # The worker leaves: its devices' episodes end with it.
+    state.apply(Message("monitoring/registry/v1/workers/fc5336", b"", E0 + 4))
+    assert state.mode_of(device_id).active == []
+
+
+def test_no_band_means_unknown_range(state: SystemState) -> None:
+    state.apply(telemetry("poultry-fc5336-001", 1, E0, value=99))
+    assert state.out_of_range(state.devices["poultry-fc5336-001"]) is None
+
+
+def alert_message(state: str, at: float, active: bool = False) -> Message:
+    from monitoring_mqtt.consumers.rules import AlertEvaluator, Rule
+    from monitoring_mqtt.core.alerts import AlertState
+
+    evaluator = AlertEvaluator([Rule(id="ammonia-high", device_type="poultry_type", above=25)])
+    m = Measurement.from_payload(telemetry("poultry-fc5336-001", 1, E0, value=30).payload)
+    event = evaluator.evaluate(m)[0]
+    if state == "cleared":
+        event = event.model_copy(update={"state": AlertState.CLEARED, "value": 20})
+    topic = event.active_topic if active else event.topic
+    payload = b"" if active and state == "cleared" else event.to_payload()
+    return Message(topic, payload, at)
+
+
+def test_open_alerts_and_alert_events(state: SystemState) -> None:
+    state.apply_all([alert_message("raised", E0), alert_message("raised", E0, active=True)])
+    assert [a.rule_id for a in state.alerts_of("poultry-fc5336-001")] == ["ammonia-high"]
+    assert state.notable[-1].kind is EventKind.ALERT
+    assert state.notable[-1].text == "ammonia-high warning: 30 ppm above 25"
+    state.apply_all([alert_message("cleared", E0 + 1),
+                     alert_message("cleared", E0 + 1, active=True)])  # fmt: skip
+    assert state.open_alerts() == []
+    assert state.notable[-1].text == "ammonia-high cleared at 20 ppm"

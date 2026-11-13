@@ -2,7 +2,9 @@
 
 Starts a SimulationWorker hosting ``DEVICES_PER_WORKER`` virtual devices. Their types come
 from the catalog at ``DEVICES_CONFIG``, optionally restricted by ``DEVICE_TYPES``
-(comma-separated type names; Compose sets one type per worker service).
+(comma-separated type names; Compose sets one type per worker service). Anomalies,
+instability and faults come from ``SIMULATION_BEHAVIOR`` (JSON, set by the CLI from the
+experiment's ``behavior`` section).
 
 Before creating devices, the worker claims its ``worker_id`` in the broker registry, so
 workers on different machines never share device client ids (``registration.py``).
@@ -33,9 +35,12 @@ from monitoring_mqtt.core.lifecycle import shutdown_event
 from monitoring_mqtt.core.logging import configure_logging, kv
 from monitoring_mqtt.core.registry import WorkerClaim
 from monitoring_mqtt.core.status import node_name
+from monitoring_mqtt.simulator.behavior import EventFactory, build_behavior
+from monitoring_mqtt.simulator.behavior_config import BehaviorConfig
 from monitoring_mqtt.simulator.catalog import DEFAULT_CATALOG_PATH, CatalogError, load_catalog
 from monitoring_mqtt.simulator.factory import build_devices, select_types
 from monitoring_mqtt.simulator.identity import resolve_worker_id
+from monitoring_mqtt.simulator.plane import SimulationPlane
 from monitoring_mqtt.simulator.registration import (
     Registration,
     WorkerIdUnavailableError,
@@ -66,6 +71,7 @@ def main() -> int:
         type_names = [n.strip() for n in env.get("DEVICE_TYPES", "").split(",") if n.strip()]
         types = select_types(catalog, type_names)
         worker_id = resolve_worker_id()
+        behavior = BehaviorConfig.from_env(env.get("SIMULATION_BEHAVIOR"))
     except (ConfigError, CatalogError, ValueError) as exc:
         logging.basicConfig()
         logger.error("invalid configuration: %s", exc)
@@ -123,9 +129,27 @@ def main() -> int:
             kv(device_id=device.device_id, type=device.profile.device_type, site=device.site_id),
         )
 
+    types_by_name = {t.name: t for t in types}
+    behaviors = [
+        build_behavior(behavior, d.device_id, types_by_name[d.profile.device_type], seed)
+        for d in devices
+    ]
+    if behavior.enabled:
+        logger.info("behaviour %s", behavior.to_env())
+    worker = SimulationWorker(
+        worker_id,
+        devices,
+        interval,
+        behaviors=behaviors,
+        events=EventFactory(run_id, worker_id),
+    )
+    plane = SimulationPlane(worker_id, settings, worker.submit)
+    worker.attach_events(plane.publish_event)
+    plane.start()
     try:
-        SimulationWorker(worker_id, devices, interval).run(stop)
+        worker.run(stop)
     finally:
+        plane.stop()
         registration.release()
     return WORKER_ID_CONFLICT_EXIT if lost.is_set() else 0
 

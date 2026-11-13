@@ -15,9 +15,11 @@ from rich.table import Table
 from monitoring_mqtt.cli import compose
 from monitoring_mqtt.cli.dockerhost import DockerHost, DockerHostError, inspect_docker_host
 from monitoring_mqtt.cli.machine import (
+    ALERTS,
     BROKER,
     DEVICES,
     MONITORS,
+    STORAGE,
     Machine,
     MachineError,
     load_machine,
@@ -31,10 +33,13 @@ from monitoring_mqtt.cli.simulation import (
     load_simulation,
     resolve_run_id,
 )
+from monitoring_mqtt.core.durations import human_duration
 from monitoring_mqtt.core.identity import host_short_id
 from monitoring_mqtt.core.registry import WorkerClaim
 
 BROKER_SERVICE = "broker"
+STORAGE_SERVICES = ("postgres", "api", "ingestion")  # long-running (migrate exits)
+ALERTS_SERVICE = "alerts"
 RELAY_SERVICE = "broker-relay"
 WORKERS_SERVICE = "workers"
 
@@ -70,7 +75,12 @@ def load_simulation_or_exit(root: Path, config: Path | None) -> Simulation:
 
 def for_machine(sim: Simulation, machine: Machine) -> Simulation:
     """The experiment as this machine runs it: other machines' roles get 0 replicas."""
-    plan = sim.plan.limited_to(devices=machine.runs(DEVICES), monitors=machine.runs(MONITORS))
+    plan = sim.plan.limited_to(
+        devices=machine.runs(DEVICES),
+        monitors=machine.runs(MONITORS),
+        storage=machine.runs(STORAGE),
+        alerts=machine.runs(ALERTS),
+    )
     return replace(sim, plan=plan)
 
 
@@ -139,6 +149,9 @@ def verify_stack(plan: StackPlan, running: dict[str, list[str]]) -> list[str]:
     """Problems found after start-up: missing replicas or colliding client ids."""
     expected = {w.service: w.replicas for w in plan.workers}
     expected.update({m.service: m.replicas for m in plan.monitors})
+    # Ingestion and alerts use fixed client ids (persistent sessions): exactly one each.
+    expected.update({s: int(plan.storage) for s in STORAGE_SERVICES})
+    expected[ALERTS_SERVICE] = int(plan.alerts)
     return [
         *_check_counts(expected, running),
         # Device and monitor client ids embed the container's short id; check each group.
@@ -304,6 +317,24 @@ def print_experiment(
     table.add_row("seed", str(sim.run.seed))
     table.add_row("log level", sim.run.log_level)
     table.add_row("publish interval", f"{sim.devices.publish_interval_seconds:g} s")
+    table.add_row("behaviour", sim.behavior.describe())
+    if sim.plan.storage:
+        table.add_row(
+            "storage",
+            f"on: API {machine.api_url} (reference {machine.api_url}/docs); batches of "
+            f"{sim.storage.batch_size}, every {human_duration(sim.storage.flush_interval)}",
+        )
+    else:
+        table.add_row("storage", "off" + _off_reason(sim.storage.enabled, machine, STORAGE))
+    if sim.plan.alerts and sim.rules is not None:
+        table.add_row("alerts", f"on: {len(sim.rules.rules)} rules from {sim.alerts.rules}")
+    else:
+        table.add_row("alerts", "off" + _off_reason(sim.alerts.enabled, machine, ALERTS))
+    for fault in sim.behavior.faults:
+        lasts = f" for {human_duration(fault.lasts)}" if fault.lasts else " until the end"
+        table.add_row(
+            "  fault", f"{fault.action.value} {fault.device} at {human_duration(fault.at)}{lasts}"
+        )
     table.add_row("MQTT QoS", str(mqtt.qos))
     table.add_row("MQTT keepalive", f"{mqtt.keepalive_seconds} s")
     table.add_row("MQTT clean session", str(mqtt.clean_session).lower())
@@ -312,6 +343,12 @@ def print_experiment(
         f"{mqtt.reconnect.min_delay_seconds}-{mqtt.reconnect.max_delay_seconds} s backoff",
     )
     console.print(table)
+
+
+def _off_reason(enabled: bool, machine: Machine, role: str) -> str:
+    if not enabled:
+        return " (disabled in the experiment)"
+    return f" here (role '{role}' not on this machine)" if not machine.runs(role) else ""
 
 
 def print_topology(sim: Simulation, machine: Machine, running: dict[str, list[str]]) -> None:
@@ -375,6 +412,7 @@ def up(
         raise typer.Exit(code=code)
 
     services = [w.service for w in plan.workers] + [m.service for m in plan.monitors]
+    services += [*STORAGE_SERVICES, ALERTS_SERVICE]
     running = running_containers(root, [*services, RELAY_SERVICE])
     print_experiment(sim, machine, effective_run_id, generated, relay)
     print_topology(sim, machine, running)
@@ -427,9 +465,39 @@ def _worker_services(root: Path) -> list[str]:
 
 
 @app.command()
-def down(ctx: typer.Context) -> None:
-    """Stop and remove the stack containers and network."""
-    _compose(ctx, "down", "--remove-orphans")
+def down(
+    ctx: typer.Context,
+    volumes: Annotated[
+        bool, typer.Option("--volumes", help="Also delete the stored history (database).")
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")] = False,
+) -> None:
+    """Stop and remove the stack containers and network (the history is kept)."""
+    if volumes and not yes:
+        typer.confirm("Delete the stored history (PostgreSQL volume) too?", abort=True)
+    _compose(ctx, "down", "--remove-orphans", *(["--volumes"] if volumes else []))
+
+
+@app.command()
+def restart(
+    ctx: typer.Context,
+    services: Annotated[
+        list[str] | None, typer.Argument(help="Services to restart (default: all).")
+    ] = None,
+    timeout: Annotated[
+        int | None,
+        typer.Option("--timeout", "-t", min=0, help="Seconds to wait for a clean stop."),
+    ] = None,
+) -> None:
+    """Restart running containers as they are (same run id and settings).
+
+    Use it to provoke a restart, e.g. 'stack restart broker'. To apply a changed
+    config/simulation.yaml or start a new run, use 'stack up'.
+    """
+    args = ["restart"]
+    if timeout is not None:
+        args += ["--timeout", str(timeout)]
+    _compose(ctx, *args, *(services or []))
 
 
 @app.command()

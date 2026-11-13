@@ -21,6 +21,9 @@ planned storage, alerts, API and dashboard, and how every part communicates, see
 | `monitor-aquaculture`, `monitor-poultry`, `monitor-cattle` services | Implemented | Generic monitor, one service per domain, subscribed to `monitoring/v1/{domain}/#`; N replicas from the topology |
 | `monitor-all` service | Implemented (0 replicas by default) | Same monitor code, subscribed to `monitoring/v1/#` |
 | `smoke` service (profile `tools`) | Implemented | One-off end-to-end check started by `monitoring-mqtt test smoke`; never part of `stack up` |
+| `postgres`, `migrate`, `api`, `ingestion` services (role `storage`) | Implemented | History: PostgreSQL (volume `pgdata`), schema migrations, the FastAPI API (single owner of the database) and the MQTT → API bridge ([storage.md](storage.md), [api.md](api.md)) |
+| `alerts` service (role `alerts`) | Implemented | Alert engine: applies `config/alerts.yaml` to every measurement and publishes alert events on the broker ([alerts.md](alerts.md)) |
+| `control` service (profile `tools`) | Implemented | One-off live command to one device, started by `monitoring-mqtt device ...`; goes through the broker to the worker hosting the device |
 
 ## Configuration
 
@@ -86,6 +89,10 @@ less memory per device, and the planned experiments compare both granularities.
 - **Scheduling.** A worker publishes from all its devices on a fixed-rate schedule, with
   start times spread evenly over one interval to avoid bursts. Before the first publication
   it waits, for at most 10 s, until its devices are connected.
+- **Behaviour.** Each device can go through episodes: anomalies, pauses, delays,
+  disconnections, being switched off. They come from the experiment's `behavior` section
+  (random or scheduled) or from live commands, apply to that device only, and are announced
+  on the simulation plane ([simulation.md](simulation.md)).
 - **Failure granularity.** A device that fails only affects itself, because the worker
   catches the error and keeps the other devices running. A worker container that fails
   takes down all the devices it hosts.
@@ -166,9 +173,11 @@ publisher. The topic and payload contract is described in [mqtt-contract.md](mqt
 
 | Package | Responsibility | May depend on |
 |---|---|---|
-| `monitoring_mqtt.core` | Contract (topics, payload model, worker registry), configuration, logging, MQTT client factory | Third-party libraries only |
-| `monitoring_mqtt.simulator` | Device catalog, generators, identities, worker id registration, `VirtualDevice`, `SimulationWorker`, simulator entrypoint | `core` |
-| `monitoring_mqtt.consumers` | Subscribers (`monitor`) | `core` |
+| `monitoring_mqtt.core` | Contract (topics, payload model, worker registry, status, simulation plane, alerts, ingestion batches, durations), configuration, logging, MQTT client factory | Third-party libraries only |
+| `monitoring_mqtt.storage` | Database schema, Alembic migrations, idempotent writes, queries | `core`. Only `api` imports it |
+| `monitoring_mqtt.api` | FastAPI application: ingestion and query routes, Scalar reference | `core`, `storage` |
+| `monitoring_mqtt.simulator` | Device catalog, generators, identities, worker id registration, behaviour (episodes), simulation plane client, `VirtualDevice`, `SimulationWorker`, simulator entrypoint | `core` |
+| `monitoring_mqtt.consumers` | Subscribers: `monitor`, `ingestion` (MQTT → API, buffer, retries), `alerts` (rules, alert engine) | `core`. Never `storage` or `api` |
 | `monitoring_mqtt.testing` | Runtime checks against a running stack (`smoke`) | `core` |
 | `monitoring_mqtt.tools` | Auxiliary services: registry listing (`workers`) and the TCP `relay` | `core` |
 | `monitoring_mqtt.tui` | Read-only terminal UI (Textual): observer client, state model, screens | `core` |
@@ -184,6 +193,11 @@ Each service is a module entrypoint that runs inside the shared application imag
 |---|---|
 | `device-aquaculture`, `device-poultry`, `device-cattle` | `python -m monitoring_mqtt.simulator` (differ only by `DEVICE_TYPES`) |
 | `monitor-aquaculture`, `monitor-poultry`, `monitor-cattle`, `monitor-all` | `python -m monitoring_mqtt.consumers.monitor` (differ only by `MQTT_TOPIC_FILTER`) |
+| `migrate` | `python -m monitoring_mqtt.storage.migrate` (runs once per `stack up`, then exits) |
+| `api` | `python -m monitoring_mqtt.api` (uvicorn; published on `127.0.0.1:8000`) |
+| `ingestion` | `python -m monitoring_mqtt.consumers.ingestion` (fixed client id, persistent session) |
+| `alerts` | `python -m monitoring_mqtt.consumers.alerts` (fixed client id, persistent session) |
+| `control` | `python -m monitoring_mqtt.tools.control` (one-off, profile `tools`) |
 | `smoke` | `python -m monitoring_mqtt.testing.smoke` (one-off, profile `tools`) |
 | `workers` | `python -m monitoring_mqtt.tools.workers` (one-off, profile `tools`) |
 | `tui` | `python -m monitoring_mqtt.tui` (interactive one-off, profile `tools`; see [tui.md](tui.md)) |
@@ -200,7 +214,12 @@ Each service is a module entrypoint that runs inside the shared application imag
            └── network monitoring-mqtt_default
                 ├── broker               (Mosquitto, listens on 1883; 127.0.0.1:1883 on the host)
                 ├── device-<domain> × N  ──► broker:1883   (M connections each)
-                └── monitor-<kind> × N   ──► broker:1883   (1 connection each)
+                ├── monitor-<kind> × N   ──► broker:1883   (1 connection each)
+                ├── alerts               ──► broker:1883   (rules; publishes alerts)
+                ├── ingestion            ──► broker:1883, ──HTTP──► api:8000
+                ├── api                  ──SQL──► postgres:5432   (127.0.0.1:8000 on the host)
+                ├── postgres             (volume pgdata; not published on the host)
+                └── migrate              (one-off: schema migrations before the API starts)
 ```
 
 - **Fixed project name.** Every CLI invocation targets the Compose project `monitoring-mqtt`,
@@ -212,7 +231,9 @@ Each service is a module entrypoint that runs inside the shared application imag
   (`Dockerfile`) installs the package and its locked dependencies with `uv`, runs as a
   non-root user, and is shared by every Python service. There are no bind mounts.
 - **Health.** The broker has a healthcheck that reads the retained `$SYS/broker/version`
-  topic. `stack up` waits for it to pass.
+  topic; PostgreSQL uses `pg_isready` and the API `GET /health`. `stack up` waits for them
+  to pass. The API starts only after `migrate` succeeded, and the ingestion consumer only
+  after the API is healthy.
 - **Several machines.** The same project can be split across machines, for example the
   broker on a Raspberry Pi and devices on other computers. Each machine runs the parts
   listed in its `.env` and connects to the shared broker; see [distributed.md](distributed.md).
@@ -253,7 +274,12 @@ exits with `1`, without starting a container, when the stack is not running.
 | Invalid message | The monitor logs it with the reason, counts it and keeps running |
 | `SIGTERM` (`docker stop`) | Services disconnect cleanly and log summary counters. Workers remove their registry claim |
 | Worker killed or cut off | The broker publishes the worker's Last Will, which removes its registry claim |
+| Network cut (half-open connection) | Detected by keepalive within 1.5 x 30 s. A worker's unacknowledged QoS 1 messages are sent again after reconnection; a monitor with a clean session loses what was routed to it meanwhile |
+| API or database down | The ingestion consumer keeps the events in its buffer and retries with backoff; nothing is lost while the buffer has room ([storage.md](storage.md#measured)) |
+| Ingestion consumer or alert engine down | Persistent session: the broker queues their measurements (up to 1000) and delivers them on reconnection; the alert engine restores its open alerts first |
 | Two workers with the same id | The later one switches to a random id before creating devices; a conflict found while running stops the later worker, which restarts with a new id |
+
+Measured examples of each case, and how to provoke them: [failures.md](failures.md).
 
 ## The CLI is outside the data path
 

@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime
+from functools import partial
 from typing import ClassVar, Protocol
 
 from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
-from textual.screen import ModalScreen
+from textual.css.query import NoMatches
+from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Footer, Input, Static, TabbedContent, TabPane
 
 from monitoring_mqtt.core.status import MonitorState
@@ -104,18 +106,49 @@ class MonitoringApp(App[None]):
     #detail { width: 90%; height: 85%; border: thick $primary; background: $surface;
               padding: 1 2; }
     """
+    # The footer shows only the menu (P); every action is in it, with its shortcut.
     BINDINGS: ClassVar = [
-        Binding("1", "tab('overview')", "Overview"),
-        Binding("2", "tab('devices')", "Devices"),
-        Binding("3", "tab('monitors')", "Monitors"),
-        Binding("4", "tab('events')", "Events"),
-        Binding("5", "tab('broker')", "Broker"),
-        Binding("slash", "filter", "Filter"),
-        Binding("p", "pause", "Pause events"),
-        Binding("t", "toggle_telemetry", "Telemetry in events"),
-        Binding("h", "toggle_inactive", "Hide inactive"),
+        Binding("p", "command_palette", "Menu", key_display="P"),
+        Binding("1", "tab('overview')", "Overview", show=False),
+        Binding("2", "tab('devices')", "Devices", show=False),
+        Binding("3", "tab('monitors')", "Monitors", show=False),
+        Binding("4", "tab('events')", "Events", show=False),
+        Binding("5", "tab('broker')", "Broker", show=False),
+        Binding("slash", "filter", "Filter", show=False),
+        Binding("space", "pause", "Pause events", show=False),
+        Binding("t", "toggle_telemetry", "Telemetry in events", show=False),
+        Binding("h", "toggle_inactive", "Hide inactive", show=False),
+        Binding("a", "alerts", "Open alerts", show=False),
         Binding("escape", "leave_filter", "Back", show=False),
-        Binding("q", "quit", "Quit"),
+        Binding("q", "quit", "Quit", show=False),
+    ]
+    MENU: ClassVar = [
+        (
+            "Overview",
+            "1",
+            "Machines, workers, devices, broker, subscribers, flow",
+            "tab('overview')",
+        ),
+        (
+            "Devices",
+            "2",
+            "Every device: value, mode, alerts, sequence, consumers",
+            "tab('devices')",
+        ),
+        ("Monitors", "3", "Subscribers and what each one received", "tab('monitors')"),
+        ("Events", "4", "System changes, gaps, simulated episodes, alerts", "tab('events')"),
+        ("Broker", "5", "Mosquitto statistics and publish rates", "tab('broker')"),
+        ("Open alerts", "a", "Alerts raised and not cleared yet", "alerts"),
+        ("Filter", "/", "Filter the Devices or Events table", "filter"),
+        ("Pause events", "space", "Freeze or resume the Events table", "pause"),
+        (
+            "Telemetry in events",
+            "t",
+            "Include every telemetry message in Events",
+            "toggle_telemetry",
+        ),
+        ("Hide inactive", "h", "Hide stopped monitors and departed workers", "toggle_inactive"),
+        ("Quit", "q", "Leave the UI; the stack keeps running", "quit"),
     ]
 
     def __init__(
@@ -171,7 +204,7 @@ class MonitoringApp(App[None]):
                 yield DataTable(id="event-table", cursor_type="row")
             with TabPane("5 Broker", id="broker"), VerticalScroll():
                 yield Static(id="broker-body")
-        yield Footer()
+        yield Footer(show_command_palette=False)
 
     def on_mount(self) -> None:
         self.query_one("#pub-box").border_title = "Publishers"
@@ -181,7 +214,8 @@ class MonitoringApp(App[None]):
         self.query_one("#monitor-detail-box").border_title = "Selected monitor"
         devices = self.query_one("#device-table", DataTable)
         for label in ("", "Device", "Type", "Domain", "Machine", "Worker", "Site", "Value",
-                      "Trend", "Seq", "Msg/s", "Missing", "Last seen", "Consumed by"):  # fmt: skip
+                      "Mode", "Trend", "Seq", "Msg/s", "Missing", "Last seen",
+                      "Consumed by"):  # fmt: skip
             devices.add_column(label, key=label or "state")
         monitors = self.query_one("#monitor-table", DataTable)
         for label in ("", "Client id", "Filter", "Machine", "Msg/s", "Received", "Invalid",
@@ -206,7 +240,10 @@ class MonitoringApp(App[None]):
         self.history["observed"].append(self.state.observed_rate(now))
         self.history["in"].append(self.state.broker.per_second("received") or 0.0)
         self.history["out"].append(self.state.broker.per_second("sent") or 0.0)
-        self.refresh_view(now)
+        try:
+            self.refresh_view(now)
+        except NoMatches:
+            return  # the timer fired once more while the app shut down its widgets
 
     def refresh_view(self, now: float | None = None) -> None:
         now = self.clock() if now is None else now
@@ -245,7 +282,8 @@ class MonitoringApp(App[None]):
                 node,
                 device.worker_id,
                 device.site_id,
-                Text(render.value_text(device), style="bold"),
+                render.value_cell(state, device),
+                render.mode_text(state, device.device_id),
                 render.sparkline(list(device.values), 16),
                 str(device.sequence),
                 f"{device.rate(now):.2f}",
@@ -368,6 +406,18 @@ class MonitoringApp(App[None]):
 
     def _show_detail(self, title: str, body: RenderableType, origin: DataTable) -> None:
         self.push_screen(DetailScreen(title, body), callback=lambda _: origin.focus())
+
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        """The menu (P): every action of the UI with its shortcut, then Textual's own."""
+        for title, key, help_text, action in self.MENU:
+            yield SystemCommand(f"{title} ({key})", help_text, partial(self.run_action, action))
+        for command in super().get_system_commands(screen):
+            if command.title.lower() != "quit":
+                yield command
+
+    def action_alerts(self) -> None:
+        body = render.alerts_table(self.state, self.clock())
+        self.push_screen(DetailScreen(f"Open alerts ({len(self.state.alerts)})", body))
 
     def action_filter(self) -> None:
         active = self.query_one("#tabs", TabbedContent).active

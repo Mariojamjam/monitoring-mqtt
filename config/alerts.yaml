@@ -1,0 +1,67 @@
+# Alert rules: when a device's value means trouble. The alert engine (service `alerts`)
+# applies them to every measurement and publishes alerts on monitoring/alerts/v1/...
+# Thresholds are SYNTHETIC lab parameters, consistent with the normal bands in
+# config/devices.yaml; they are not veterinary or clinical references.
+#
+# Each rule watches one device type:
+#   above / below   the threshold (exactly one): alert when value > above (or < below)
+#   severity        warning | critical (default warning)
+#   after           consecutive values past the threshold before raising (default 1);
+#                   2 or more ignores a single noisy value
+#   clear_at        the alert clears only when the value is back past this level
+#                   (hysteresis, default: the threshold itself), so it does not flap
+#   clear_after     consecutive values past clear_at before clearing (default 1)
+#
+# A value can violate several rules at once (e.g. warning and critical): each has its own
+# alert. Changes apply on the next `monitoring-mqtt stack up`.
+
+schema_version: 1
+
+rules:
+  - id: oxygen-low
+    device_type: dissolved_oxygen_probe
+    below: 5.0
+    severity: warning
+    after: 2
+    clear_at: 5.3
+    clear_after: 2
+  - id: oxygen-critical
+    device_type: dissolved_oxygen_probe
+    below: 4.0
+    severity: critical
+    clear_at: 4.5
+  - id: oxygen-high
+    device_type: dissolved_oxygen_probe
+    above: 8.0
+    severity: warning
+    after: 2
+    clear_at: 7.7
+    clear_after: 2
+
+  - id: ammonia-high
+    device_type: ammonia_detector
+    above: 25.0
+    severity: warning
+    after: 2
+    clear_at: 23.0
+    clear_after: 2
+  - id: ammonia-critical
+    device_type: ammonia_detector
+    above: 35.0
+    severity: critical
+    clear_at: 32.0
+
+  - id: rumen-ph-low
+    device_type: rumen_ph_bolus
+    below: 5.8
+    severity: warning
+    after: 2
+    clear_at: 5.9
+    clear_after: 2
+  - id: rumen-ph-high
+    device_type: rumen_ph_bolus
+    above: 6.8
+    severity: warning
+    after: 2
+    clear_at: 6.7
+    clear_after: 2

@@ -127,3 +127,56 @@ def test_sparkline() -> None:
     assert render.sparkline([1, 2, 3]) == "▁▄█"
     assert render.sparkline([5, 5]) == "▁▁"
     assert render.sparkline([]) == ""
+
+
+def test_devices_show_simulated_mode_and_out_of_range_values() -> None:
+    from monitoring_mqtt.core.simulation import EpisodeKind, EpisodePhase, EpisodeSource, SimEvent
+    from monitoring_mqtt.tui.state import Band
+
+    event = SimEvent(
+        run_id="lab-01", worker_id="aaaaaa", device_id="poultry-aaaaaa-001",
+        kind=EpisodeKind.ANOMALY, phase=EpisodePhase.START, source=EpisodeSource.MANUAL,
+        direction="high",
+    )  # fmt: skip
+    items = [*scenario(), telemetry("poultry-aaaaaa-001", 2, E0 + 2, value=40.0),
+             Message(event.topic, event.to_payload(), E0 + 2)]  # fmt: skip
+    feed = FakeFeed(items)
+    state = SystemState(5.0, feed.client_id, {"poultry_type": Band(0.0, 25.0)})
+    app = MonitoringApp(feed, state, "broker:1883", clock=lambda: E0 + 2)
+
+    async def scenario_test() -> None:
+        async with app.run_test(size=(200, 50)) as pilot:
+            await pilot.press("2")
+            await pilot.pause()
+            table = app.query_one("#device-table", DataTable)
+            row = table.get_row("poultry-aaaaaa-001")
+            mode = row[table.get_column_index("Mode")]
+            value = row[table.get_column_index("Value")]
+            assert mode.plain == "anomaly ↑"
+            assert "red" in str(value.style)
+            cattle = table.get_row("cattle-bbbbbb-001")
+            assert cattle[table.get_column_index("Mode")].plain == "normal"
+
+    run(scenario_test())
+
+
+def test_footer_shows_only_the_menu_and_the_menu_has_every_action() -> None:
+    async def scenario_test() -> None:
+        app, _ = make_app()
+        async with app.run_test(size=(180, 50)) as pilot:
+            await pilot.pause()
+            shown = [b for b in app.BINDINGS if b.show]
+            assert [(b.key, b.description) for b in shown] == [("p", "Menu")]
+            titles = [c.title for c in app.get_system_commands(app.screen)]
+            for expected in ("Devices (2)", "Filter (/)", "Open alerts (a)", "Quit (q)"):
+                assert expected in titles
+            await pilot.press("p")
+            await pilot.pause()
+            assert type(app.screen).__name__ == "CommandPalette"
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.press("space")  # pause moved from p to space
+            await pilot.pause()
+            assert app.paused
+
+    run(scenario_test())

@@ -8,13 +8,21 @@ import shutil
 import socket
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
 from monitoring_mqtt.cli.dockerhost import DockerHostError, inspect_docker_host
-from monitoring_mqtt.cli.machine import DOCKER_HOST_ALIAS, Machine, MachineError, load_machine
+from monitoring_mqtt.cli.machine import (
+    DOCKER_HOST_ALIAS,
+    STORAGE,
+    Machine,
+    MachineError,
+    load_machine,
+)
 from monitoring_mqtt.cli.project import ProjectNotFoundError, resolve_project_root
 
 REQUIRED_PYTHON = (3, 12)
@@ -216,6 +224,43 @@ def check_machine(
     return results
 
 
+def fetch_status(url: str, timeout: float = 3.0) -> int:
+    """HTTP status of GET ``url`` (raises OSError when nothing answers)."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+
+
+def check_api(
+    explicit: Path | None,
+    fetch: Callable[[str], int] = fetch_status,
+    environment: str | None = None,
+) -> list[CheckResult]:
+    """The API and its database, when this machine runs the storage role."""
+    try:
+        machine = load_machine(resolve_project_root(explicit).path)
+    except (ProjectNotFoundError, MachineError):
+        return []  # already reported
+    if not machine.runs(STORAGE):
+        return []
+    environment = environment or detect_environment()
+    url = f"{machine.api_url}/ready"
+    if not environment.startswith("host"):
+        return [CheckResult("API", Status.OK, f"not checked from {environment}; open {url}")]
+    try:
+        status = fetch(url)
+    except OSError as exc:
+        hint = "start it with 'monitoring-mqtt stack up'"
+        return [CheckResult("API", Status.WARN, f"{url} unreachable ({exc}); {hint}")]
+    if status == 200:
+        return [CheckResult("API", Status.OK, f"{url} ready; reference {machine.api_url}/docs")]
+    if status == 503:
+        return [CheckResult("API", Status.FAIL, f"{url}: the API cannot reach its database")]
+    return [CheckResult("API", Status.FAIL, f"{url} answered HTTP {status}")]
+
+
 def run_checks(
     project_dir: Path | None, run: Runner = run_command, connect: Connector = tcp_connect
 ) -> list[CheckResult]:
@@ -227,4 +272,5 @@ def run_checks(
         *check_docker(run),
         check_project(project_dir),
         *check_machine(project_dir, connect, run=run),
+        *check_api(project_dir),
     ]

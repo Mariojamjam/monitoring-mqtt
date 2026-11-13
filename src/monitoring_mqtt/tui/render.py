@@ -9,6 +9,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
+from monitoring_mqtt.core.simulation import EpisodeKind
 from monitoring_mqtt.core.status import MonitorState, ReceivedMessage
 from monitoring_mqtt.tui.state import (
     UNREGISTERED,
@@ -75,6 +76,41 @@ def value_text(device: DeviceView) -> str:
     return f"{device.value:g}{unit}"
 
 
+def value_cell(state: SystemState, device: DeviceView) -> Text:
+    """The latest value, red when outside the device type's normal band."""
+    outside = state.out_of_range(device)
+    return Text(value_text(device), style="bold red" if outside else "bold")
+
+
+MODE_STYLE = {
+    EpisodeKind.ANOMALY: "bold red",
+    EpisodeKind.PAUSE: "yellow",
+    EpisodeKind.DELAY: "magenta",
+    EpisodeKind.DISCONNECT: "red",
+    EpisodeKind.STOP: "bright_black",
+}
+ARROWS = {"high": "↑", "low": "↓"}
+
+
+ALERT_STYLE = {"critical": "bold white on red", "warning": "bold yellow"}
+
+
+def mode_text(state: SystemState, device_id: str) -> Text:
+    """Simulated episodes (ground truth) and open alerts (detection), e.g.
+    ``anomaly ↑  alert critical``: the cause next to what the alert engine saw."""
+    text = Text()
+    for event in state.mode_of(device_id).active:
+        if text:
+            text.append("  ")
+        label = event.kind.value + (f" {ARROWS[event.direction]}" if event.direction else "")
+        text.append(label, style=MODE_STYLE[event.kind])
+    for alert in state.alerts_of(device_id):
+        if text:
+            text.append("  ")
+        text.append(f"alert {alert.severity.value}", style=ALERT_STYLE[alert.severity.value])
+    return text or Text("normal", style="dim")
+
+
 def consumers_text(state: SystemState, device: DeviceView) -> Text:
     consumers = state.consumers_of(device)
     if not consumers:
@@ -102,6 +138,14 @@ def header(state: SystemState, broker_label: str, now: float) -> Text:
         text.append(f"   invalid {state.invalid}", style="red")
     if state.missing_total():
         text.append(f"   missing {state.missing_total()}", style="yellow")
+    if state.stored() is not None:
+        text.append(f"   stored {state.stored()}", style="cyan")
+    open_alerts = state.open_alerts()
+    if open_alerts:
+        critical = sum(a.severity == "critical" for a in open_alerts)
+        text.append(f"   alerts {len(open_alerts)}", style="bold yellow")
+        if critical:
+            text.append(f" ({critical} critical)", style="bold red")
     text.append(f"   {datetime.fromtimestamp(now, UTC):%H:%M:%S} UTC", style="dim")
     return text
 
@@ -120,7 +164,7 @@ def publishers(state: SystemState, now: float, show_inactive: bool = True) -> Tr
     if not by_node:
         tree.add(Text("no devices seen yet", style="dim"))
     for node in sorted(by_node):
-        node_branch = tree.add(Text(f"🖥  {node}", style="bold"))
+        node_branch = tree.add(Text(f"machine {node}", style="bold"))
         for worker_id in sorted(by_node[node]):
             worker = state.workers.get(worker_id)
             if worker and not worker.present and not show_inactive:
@@ -148,7 +192,11 @@ def publishers(state: SystemState, now: float, show_inactive: bool = True) -> Tr
                     mark = Text("●", style=f"bold {domain_color(device.domain)}")
                 line.append_text(mark)
                 line.append(f" {device.device_id}", style=domain_color(device.domain))
-                line.append(f"  {value_text(device)}", style="bold")
+                line.append("  ")
+                line.append_text(value_cell(state, device))
+                if state.mode_of(device.device_id).active:
+                    line.append("  ")
+                    line.append_text(mode_text(state, device.device_id))
                 line.append(f"  {sparkline(list(device.values), 8)}", style="dim")
                 line.append(f"  seq {device.sequence}", style="dim")
                 if device.missing:
@@ -204,7 +252,7 @@ def subscribers(state: SystemState, now: float, show_inactive: bool = True) -> T
     if not by_node:
         tree.add(Text("no monitor status received", style="dim"))
     for node in sorted(by_node):
-        node_branch = tree.add(Text(f"🖥  {node}", style="bold"))
+        node_branch = tree.add(Text(f"machine {node}", style="bold"))
         for (kind, topic_filter), members in sorted(by_node[node].items()):
             online = sum(m.state is MonitorState.ONLINE for m in members)
             label = Text(f"monitor-{kind}", style="bold")
@@ -329,6 +377,16 @@ def monitor_detail(state: SystemState, monitor: MonitorView, now: float) -> Grou
             summary.append("\nby domain  " + "  ".join(
                 f"{domain} {count}" for domain, count in sorted(counters.by_domain.items())
             ))  # fmt: skip
+    if status.delivery:
+        d = status.delivery
+        summary.append(
+            f"\nstores via {d.api_url}  stored {d.stored}  duplicates {d.duplicates}  "
+            f"buffered {d.buffered}  dropped {d.dropped}  API errors {d.api_errors}"
+        )
+    if status.alerts:
+        a = status.alerts
+        by = "  ".join(f"{s} {n}" for s, n in sorted(a.open_by_severity.items()))
+        summary.append(f"\nalerts open {a.open} {by}  raised {a.raised}  cleared {a.cleared}")
     table = Table(
         title="Received (reported by the monitor, newest first)",
         title_justify="left",
@@ -362,6 +420,34 @@ def monitor_detail(state: SystemState, monitor: MonitorView, now: float) -> Grou
     return Group(head, subscribed, summary, Text(""), table, note)
 
 
+def _band(state: SystemState, device: DeviceView) -> str:
+    band = state.bands.get(device.device_type)
+    if band is None:
+        return "-"
+    unit = f" {device.unit}" if device.unit else ""
+    return f"{band.minimum:g} - {band.maximum:g}{unit}"
+
+
+def alerts_table(state: SystemState, now: float) -> Table:
+    """Open alerts, critical first."""
+    table = Table(expand=True, show_edge=False)
+    for column in ("Severity", "Rule", "Device", "Value", "Condition", "Open for"):
+        table.add_column(column, no_wrap=True)
+    for alert in state.open_alerts():
+        unit = f" {alert.unit}" if alert.unit else ""
+        table.add_row(
+            Text(alert.severity.value, style=ALERT_STYLE[alert.severity.value]),
+            alert.rule_id,
+            Text(alert.device_id, style=domain_color(alert.domain)),
+            f"{alert.value:g}{unit}",
+            f"{alert.condition.value} {alert.threshold:g}",
+            duration(now - alert.at.timestamp()),
+        )
+    if not state.alerts:
+        table.add_row(Text("no open alerts", style="dim"), "", "", "", "", "")
+    return table
+
+
 def device_detail(state: SystemState, device: DeviceView, now: float) -> Group:
     info = Table.grid(padding=(0, 2))
     info.add_column(style="dim")
@@ -374,7 +460,9 @@ def device_detail(state: SystemState, device: DeviceView, now: float) -> Group:
         ("site", device.site_id),
         ("machine / worker", f"{state.node_of(device)} / {device.worker_id}"),
         ("run", device.run_id),
-        ("value", value_text(device)),
+        ("value", value_cell(state, device)),
+        ("normal range", _band(state, device)),
+        ("simulated", mode_text(state, device.device_id)),
         ("history", sparkline(list(device.values))),
         ("sequence", f"{device.sequence} (received {device.received}, missing {device.missing}, "
                      f"duplicates {device.duplicates}, restarts {device.restarts})"),

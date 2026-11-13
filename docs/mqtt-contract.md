@@ -52,6 +52,9 @@ Device types are configured in `config/devices.yaml`:
 | `ammonia_detector` | `poultry` | `ammonia` | `ppm` | `house` |
 | `rumen_ph_bolus` | `cattle` | `rumen_ph` | `null` (dimensionless) | `herd` |
 
+Each type also defines how its value evolves, its normal band (`operating_range`) and its
+anomaly targets ([simulation.md](simulation.md)).
+
 `site_id` numbers the devices of each type inside one worker container: `pond-01`,
 `pond-02`, and so on. The numbering restarts in every container, so `site_id` is a label and
 not an identity. `device_id` is always the unique identity.
@@ -290,9 +293,115 @@ Status payload (UTF-8 JSON):
 - An observer that subscribes to `monitoring/status/v1/monitors/+` receives the current
   status of every monitor at once (retained), then every change.
 
-## Reserved topic families (not implemented yet)
+## Simulation plane
+
+Workers publish **ground truth** about simulated episodes, and operators send **live
+commands** to single devices ([simulation.md](simulation.md)). Both use QoS 1, are never
+retained (an old command must not run again after a restart) and live outside
+`monitoring/v1/#`, so telemetry subscribers never see them.
 
 ```text
-control/v1/{domain}/{device_id}/commands   # device commands
-alerts/v1/{domain}/{severity}              # derived alerts
+monitoring/sim/v1/devices/{device_id}                            # ground truth (worker → anyone)
+monitoring/control/v1/workers/{worker_id}/devices/{device_id}    # command (operator → worker)
+monitoring/control/v1/acks/{request_id}                          # acknowledgement (worker → operator)
 ```
+
+Each worker uses one extra connection for this plane (client id `sim-{worker_id}`),
+separate from its devices: a device that is simulating a disconnection cannot carry its own
+events. The worker subscribes to `monitoring/control/v1/workers/{worker_id}/devices/+`.
+
+Ground truth event, published when an episode starts or ends:
+
+```json
+{
+  "schema_version": 1,
+  "run_id": "run-20261112T120000Z",
+  "worker_id": "3f9a1c",
+  "device_id": "poultry-3f9a1c-002",
+  "kind": "anomaly",
+  "phase": "start",
+  "source": "fault",
+  "direction": "high",
+  "until": "2026-11-12T12:01:30Z",
+  "request_id": null,
+  "at": "2026-11-12T12:01:00Z"
+}
+```
+
+- `kind`: `anomaly`, `pause`, `delay`, `disconnect` or `stop`.
+- `phase`: `start` or `end`. Events are published when the effect is applied, at the
+  device's publish time.
+- `source`: `anomalies` or `instability` (random), `fault` (scheduled) or `manual` (a live
+  command, whose `request_id` it carries).
+- `direction`: `high` or `low` for anomalies, otherwise `null`. `until`: planned end on
+  `start` events, `null` when the episode lasts until the end of the run or a `resume`.
+
+Command and acknowledgement:
+
+```json
+{"schema_version": 1, "request_id": "8c1f…", "device_id": "poultry-3f9a1c-002",
+ "action": "stop", "lasts_seconds": 30, "direction": "high", "issued_at": "…"}
+
+{"schema_version": 1, "request_id": "8c1f…", "device_id": "poultry-3f9a1c-002",
+ "worker_id": "3f9a1c", "accepted": true,
+ "detail": "applies at the device's next publish time", "at": "…"}
+```
+
+`action` is `anomaly`, `pause`, `delay`, `disconnect`, `stop` or `resume` (ends every active
+episode). `lasts_seconds: null` lasts until a `resume`. The sender subscribes to the
+acknowledgement topic before publishing the command. A worker rejects a command for a
+device it does not host, or an anomaly direction the device type does not have.
+
+## Alerts
+
+The alert engine publishes derived events ([alerts.md](alerts.md)). Two topic families,
+both outside `monitoring/v1/#`, QoS 1:
+
+```text
+monitoring/alerts/v1/events/{domain}/{severity}/{device_id}   # raised / cleared (not retained)
+monitoring/alerts/v1/active/{device_id}/{rule_id}             # the open alert (retained)
+```
+
+An alert is an episode with one `alert_id`: the `raised` event opens it and the `cleared`
+event, with the same id, closes it. While it is open, the retained active topic holds the
+`raised` event; once cleared, it holds an empty payload (no retained message).
+
+```json
+{
+  "schema_version": 1,
+  "alert_id": "6f1c0e5a-2b4d-4f1a-9c2e-3d8b7a6c5e4f",
+  "state": "raised",
+  "rule_id": "ammonia-high",
+  "severity": "warning",
+  "condition": "above",
+  "threshold": 25.0,
+  "device_id": "poultry-3f9a1c-001",
+  "device_type": "ammonia_detector",
+  "domain": "poultry",
+  "metric": "ammonia",
+  "unit": "ppm",
+  "run_id": "run-20261113T120000Z",
+  "value": 27.4,
+  "measurement_event_id": "0b1e4c2a-8f3d-4e6b-a9c1-7d2f5e8a3b6c",
+  "measurement_timestamp": "2026-11-13T12:00:05Z",
+  "at": "2026-11-13T12:00:05.012Z"
+}
+```
+
+- `value` and `measurement_event_id` identify the measurement that caused the transition
+  (the one that raised it, or the one that cleared it).
+- `severity` is `warning` or `critical`; `condition` is `above` or `below`.
+- Subscribers can filter by interest, e.g. `monitoring/alerts/v1/events/+/critical/#` for
+  every critical alert, or `monitoring/alerts/v1/events/poultry/#` for one domain.
+
+The ingestion consumer subscribes to `monitoring/alerts/v1/events/#` and stores every alert
+through the API ([storage.md](storage.md)).
+
+## Observability plane: ingestion and alert engine
+
+The ingestion consumer (`monitoring/status/v1/monitors/ingestion`) and the alert engine
+(`…/monitors/alerts`) publish the same status as monitors, with one extra block each:
+
+- `delivery` (ingestion): the API URL, events `buffered`, `dropped` (buffer full),
+  `batches`, `stored`, `duplicates`, `rejected` and `api_errors` (failed attempts, retried);
+- `alerts` (alert engine): alerts `open` now, `open_by_severity`, `raised` and `cleared`.

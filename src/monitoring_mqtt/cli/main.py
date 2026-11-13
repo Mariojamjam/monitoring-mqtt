@@ -10,8 +10,8 @@ from rich.console import Console
 from rich.table import Table
 
 from monitoring_mqtt import __version__
+from monitoring_mqtt.cli import device, stack, testing
 from monitoring_mqtt.cli import doctor as doctor_checks
-from monitoring_mqtt.cli import stack, testing
 from monitoring_mqtt.cli import tui as tui_command
 
 app = typer.Typer(
@@ -22,6 +22,7 @@ app = typer.Typer(
 )
 app.add_typer(stack.app, name="stack")
 app.add_typer(testing.app, name="test")
+app.add_typer(device.app, name="device")
 app.command(name="tui")(tui_command.tui)
 console = Console()
 

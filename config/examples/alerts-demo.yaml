@@ -1,0 +1,31 @@
+# Alerts against ground truth: two devices of each type, each with an anomaly about every
+# minute (30 s long, both directions where the type has them). The alert engine applies
+# config/alerts.yaml; the history (API) keeps every alert, and the workers announce every
+# anomaly on monitoring/sim/v1/devices/{device_id}. Compare them to evaluate the rules:
+# detections, misses, false alarms and detection delay (docs/alerts.md).
+#
+#   monitoring-mqtt stack up -c config/examples/alerts-demo.yaml
+#   monitoring-mqtt tui          # Mode column: anomaly ↑ next to alert warning/critical
+schema_version: 1
+
+run:
+  seed: 7
+
+workers:
+  dissolved_oxygen_probe: {replicas: 1, devices_per_worker: 2}
+  ammonia_detector: {replicas: 1, devices_per_worker: 2}
+  rumen_ph_bolus: {replicas: 1, devices_per_worker: 2}
+
+monitors:
+  all: {replicas: 1}
+
+storage:
+  enabled: true
+
+alerts:
+  enabled: true
+
+behavior:
+  anomalies:
+    every: 1m
+    lasts: 30s

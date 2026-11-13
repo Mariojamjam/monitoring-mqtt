@@ -12,6 +12,7 @@ from monitoring_mqtt.cli.simulation import (
     smoke_env,
     smoke_window_seconds,
 )
+from monitoring_mqtt.simulator.behavior_config import BehaviorConfig
 
 REPO = Path(__file__).resolve().parents[2]
 HEADER = "schema_version: 1\nworkers:\n"
@@ -20,6 +21,7 @@ HEADER = "schema_version: 1\nworkers:\n"
 def project_with(tmp_path: Path, topology: str) -> Path:
     (tmp_path / "config").mkdir()
     shutil.copy(REPO / "config" / "devices.yaml", tmp_path / "config" / "devices.yaml")
+    shutil.copy(REPO / "config" / "alerts.yaml", tmp_path / "config" / "alerts.yaml")
     (tmp_path / "config" / "simulation.yaml").write_text(topology)
     return tmp_path
 
@@ -207,3 +209,54 @@ def test_invalid_experiment_parameters(tmp_path: Path, section: str) -> None:
     text = HEADER + "  ammonia_detector: {replicas: 1, devices_per_worker: 1}\n" + section + "\n"
     with pytest.raises(SimulationError, match="invalid simulation config"):
         load_simulation(project_with(tmp_path, text))
+
+
+BEHAVIOUR = (
+    HEADER
+    + "  ammonia_detector: {replicas: 1, devices_per_worker: 3}\n"
+    + """
+behavior:
+  anomalies: {every: 2m, lasts: 30s, only: [ammonia_detector]}
+  faults:
+    - {device: "poultry-*-002", at: 1m, lasts: 30s, action: stop}
+"""
+)
+
+
+def test_behaviour_reaches_the_workers(tmp_path: Path) -> None:
+    sim = load_simulation(project_with(tmp_path, BEHAVIOUR))
+    env = compose_env(sim, "run-1")
+    assert BehaviorConfig.from_env(env["SIMULATION_BEHAVIOR"]) == sim.behavior
+    assert (
+        sim.behavior.describe() == "anomalies every 2m for 30s (both) on ammonia_detector; 1 fault"
+    )
+
+
+def test_no_behaviour_by_default() -> None:
+    sim = load_simulation(REPO)
+    assert compose_env(sim, "run-1")["SIMULATION_BEHAVIOR"] == ""
+    assert sim.behavior.describe().startswith("none")
+
+
+@pytest.mark.parametrize(
+    ("behaviour", "message"),
+    [
+        ("anomalies: {every: 2m, only: [toaster]}", "unknown device type"),
+        ("anomalies: {every: 30}", "with a unit"),
+        ("faults: [{device: x, at: 1m, action: explode}]", "invalid simulation config"),
+    ],
+)
+def test_invalid_behaviour_is_rejected_before_starting(
+    tmp_path: Path, behaviour: str, message: str
+) -> None:
+    text = HEADER + "  ammonia_detector: {replicas: 1, devices_per_worker: 1}\nbehavior:\n  "
+    with pytest.raises(SimulationError, match=message):
+        load_simulation(project_with(tmp_path, text + behaviour + "\n"))
+
+
+def test_anomalies_need_types_with_targets(tmp_path: Path) -> None:
+    project = project_with(tmp_path, BEHAVIOUR)
+    catalog = project / "config" / "devices.yaml"
+    catalog.write_text(catalog.read_text().replace("    anomaly: {high: 40.0}", ""))
+    with pytest.raises(SimulationError, match="anomaly targets"):
+        load_simulation(project)
