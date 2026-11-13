@@ -158,3 +158,25 @@ def test_devices_show_simulated_mode_and_out_of_range_values() -> None:
             assert cattle[table.get_column_index("Mode")].plain == "normal"
 
     run(scenario_test())
+
+
+def test_footer_shows_only_the_menu_and_the_menu_has_every_action() -> None:
+    async def scenario_test() -> None:
+        app, _ = make_app()
+        async with app.run_test(size=(180, 50)) as pilot:
+            await pilot.pause()
+            shown = [b for b in app.BINDINGS if b.show]
+            assert [(b.key, b.description) for b in shown] == [("p", "Menu")]
+            titles = [c.title for c in app.get_system_commands(app.screen)]
+            for expected in ("Devices (2)", "Filter (/)", "Open alerts (a)", "Quit (q)"):
+                assert expected in titles
+            await pilot.press("p")
+            await pilot.pause()
+            assert type(app.screen).__name__ == "CommandPalette"
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.press("space")  # pause moved from p to space
+            await pilot.pause()
+            assert app.paused
+
+    run(scenario_test())

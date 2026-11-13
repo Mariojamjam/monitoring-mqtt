@@ -53,8 +53,20 @@ counts itself among the monitors.
 The header also shows `stored N` (events stored by the ingestion consumer) and the number
 of open alerts, critical ones in red. `a` lists the open alerts.
 
-Other keys: `/` filters the Devices or Events table, `p` pauses the Events table, `h` hides
-stopped and offline monitors and departed workers, `Esc` closes a detail or leaves a filter.
+**`P` opens the menu**, the only key shown at the bottom of the screen. It lists every
+action with its shortcut; type to search it, `Enter` runs it, `Esc` closes it. The shortcuts
+also work directly:
+
+| Key | Action |
+|---|---|
+| `1`–`5` | Overview, Devices, Monitors, Events, Broker |
+| `a` | Open alerts |
+| `/` | Filter the Devices or Events table (`Esc` leaves the filter) |
+| `space` | Pause or resume the Events table |
+| `t` | Include every telemetry message in Events |
+| `h` | Hide stopped and offline monitors and departed workers |
+| `Enter` | Detail of the selected device or monitor (`Esc` closes it) |
+| `q` | Quit; the stack keeps running |
 
 States:
 

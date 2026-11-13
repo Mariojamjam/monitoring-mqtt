@@ -164,7 +164,7 @@ def publishers(state: SystemState, now: float, show_inactive: bool = True) -> Tr
     if not by_node:
         tree.add(Text("no devices seen yet", style="dim"))
     for node in sorted(by_node):
-        node_branch = tree.add(Text(f"🖥  {node}", style="bold"))
+        node_branch = tree.add(Text(f"machine {node}", style="bold"))
         for worker_id in sorted(by_node[node]):
             worker = state.workers.get(worker_id)
             if worker and not worker.present and not show_inactive:
@@ -252,7 +252,7 @@ def subscribers(state: SystemState, now: float, show_inactive: bool = True) -> T
     if not by_node:
         tree.add(Text("no monitor status received", style="dim"))
     for node in sorted(by_node):
-        node_branch = tree.add(Text(f"🖥  {node}", style="bold"))
+        node_branch = tree.add(Text(f"machine {node}", style="bold"))
         for (kind, topic_filter), members in sorted(by_node[node].items()):
             online = sum(m.state is MonitorState.ONLINE for m in members)
             label = Text(f"monitor-{kind}", style="bold")
