@@ -27,9 +27,9 @@ from typing import Annotated, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from monitoring_mqtt.consumers.rules import RulesError, RulesFile, load_rules
 from monitoring_mqtt.core.durations import Duration
 from monitoring_mqtt.core.ingest import MAX_BATCH_ITEMS
+from monitoring_mqtt.core.rules import RulesError, RulesFile, load_rules
 from monitoring_mqtt.core.topics import ALL_TELEMETRY_FILTER, domain_filter
 from monitoring_mqtt.simulator.behavior_config import BehaviorConfig
 from monitoring_mqtt.simulator.catalog import CatalogError, DeviceCatalog, load_catalog

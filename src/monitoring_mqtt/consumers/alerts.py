@@ -17,7 +17,6 @@ Restarts keep the alert state:
 from __future__ import annotations
 
 import logging
-import os
 import socket
 import sys
 import threading
@@ -26,24 +25,18 @@ import uuid
 from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 
 import paho.mqtt.client as mqtt
 from pydantic import ValidationError
 
 from monitoring_mqtt.consumers.monitor import InvalidMessageError, MonitorStats, decode_measurement
-from monitoring_mqtt.consumers.rules import (
-    DEFAULT_RULES_PATH,
-    AlertEvaluator,
-    RulesError,
-    RulesFile,
-    load_rules,
-)
+from monitoring_mqtt.consumers.rules import AlertEvaluator
 from monitoring_mqtt.core import mqtt as mqtt_helpers
 from monitoring_mqtt.core.alerts import ACTIVE_ALERTS_FILTER, ALERT_QOS, AlertEvent, AlertState
 from monitoring_mqtt.core.config import ConfigError, MqttSettings, log_level_from_env
 from monitoring_mqtt.core.lifecycle import shutdown_event
 from monitoring_mqtt.core.logging import configure_logging, kv
+from monitoring_mqtt.core.rules import RulesError, RulesFile, load_configured_rules
 from monitoring_mqtt.core.status import (
     STATUS_INTERVAL_SECONDS,
     STATUS_QOS,
@@ -232,17 +225,6 @@ class AlertEngine:
                 except (RuntimeError, ValueError):
                     logger.warning("status not cleared")
             mqtt_helpers.stop(self.client)
-
-
-def load_configured_rules() -> RulesFile:
-    """``ALERT_RULES`` (JSON, set by the CLI from the experiment) or the rules file."""
-    raw = os.environ.get("ALERT_RULES", "").strip()
-    if raw:
-        try:
-            return RulesFile.from_env(raw)
-        except ValidationError as exc:
-            raise RulesError(f"invalid ALERT_RULES: {exc}") from exc
-    return load_rules(Path(os.environ.get("ALERT_RULES_FILE", str(DEFAULT_RULES_PATH))))
 
 
 def main() -> int:

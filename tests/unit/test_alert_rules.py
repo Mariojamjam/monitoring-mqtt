@@ -5,13 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from monitoring_mqtt.consumers.rules import (
-    AlertEvaluator,
-    Rule,
-    RulesError,
-    RulesFile,
-    load_rules,
-)
+from monitoring_mqtt.consumers.rules import AlertEvaluator
 from monitoring_mqtt.core.alerts import (
     AlertEvent,
     AlertState,
@@ -21,6 +15,7 @@ from monitoring_mqtt.core.alerts import (
     alert_event_topic,
 )
 from monitoring_mqtt.core.models import Measurement
+from monitoring_mqtt.core.rules import Rule, RulesError, RulesFile, load_rules
 
 T0 = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 AMMONIA_HIGH = Rule(id="ammonia-high", device_type="ammonia_detector", above=25.0, after=2,
