@@ -387,7 +387,8 @@ def compose_env(sim: Simulation, run_id: str) -> dict[str, str]:
         "INGEST_FLUSH_INTERVAL_SECONDS": _number(sim.storage.flush_interval),
         "INGEST_BUFFER_LIMIT": str(sim.storage.buffer_limit),
         "ALERTS_REPLICAS": "1" if sim.plan.alerts else "0",
-        "ALERT_RULES": sim.rules.to_env() if sim.rules else "",
+        # The API shows the rules (catalog): none when the alert engine is off.
+        "ALERT_RULES": (sim.rules or RulesFile(schema_version=1)).to_env(),
     }
     for worker in sim.plan.workers:
         env[f"{worker.env_prefix}_REPLICAS"] = str(worker.replicas)

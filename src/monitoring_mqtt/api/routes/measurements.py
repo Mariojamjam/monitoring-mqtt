@@ -40,25 +40,32 @@ def list_measurements(
                         next_cursor=page.next_cursor)  # fmt: skip
 
 
-@router.get("/series", summary="Aggregated time series of one device")
+@router.get("/series", summary="Aggregated time series")
 def series(
     store: StoreDep,
-    device_id: Annotated[str, Query(description="The device")],
+    device_id: Annotated[str | None, Query(description="One device")] = None,
+    domain: Annotated[str | None, Query(description="Every device of a domain")] = None,
+    run_id: Annotated[str | None, Query(description="Only this run")] = None,
     bucket: Annotated[str, Query(description="Bucket size: 10s, 1m, 5m, 1h…")] = "1m",
     since: Since = None,
     until: Until = None,
 ) -> schemas.Series:
     """Average, minimum, maximum and count per bucket, oldest first (at most 2000
-    buckets: the most recent ones). Ready for charts."""
+    buckets: the most recent ones). Over one device (`device_id`) or all the devices of a
+    domain (`domain`): set exactly one. Ready for charts."""
+    if (device_id is None) == (domain is None):
+        raise HTTPException(422, "set exactly one of device_id or domain")
     try:
         seconds = parse_duration(bucket)
     except ValueError as exc:
         raise HTTPException(422, f"bucket: {exc}") from exc
     if seconds < MIN_BUCKET_SECONDS:
         raise HTTPException(422, "bucket: at least 1s")
-    points = store.series(device_id, seconds, since=since, until=until, limit=MAX_POINTS)
+    points = store.series(seconds, device_id=device_id, domain=domain, run_id=run_id,
+                          since=since, until=until, limit=MAX_POINTS)  # fmt: skip
     return schemas.Series(
         device_id=device_id,
+        domain=domain,
         bucket_seconds=seconds,
         points=[schemas.SeriesPoint.model_validate(p) for p in points],
     )

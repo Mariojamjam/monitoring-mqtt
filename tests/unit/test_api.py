@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from monitoring_mqtt.api.app import create_app
 from monitoring_mqtt.api.docs import SCALAR_SCRIPT, standalone_page
+from monitoring_mqtt.core.rules import Rule, RulesFile
 from monitoring_mqtt.storage.queries import InvalidCursorError, Page, decode_cursor, encode_cursor
 from monitoring_mqtt.storage.store import StorageUnavailableError
 from monitoring_mqtt.storage.writes import WriteResult
@@ -55,7 +56,7 @@ class FakeStore:
         self.calls.append(("alerts", filters))
         return Page([], None)
 
-    def series(self, device_id, bucket_seconds, **filters):
+    def series(self, bucket_seconds, **filters):
         self.calls.append(("series", {"bucket": bucket_seconds, **filters}))
         return [{"bucket_start": NOW, "count": 2, "avg": 1.5, "min": 1.0, "max": 2.0}]
 
@@ -139,6 +140,40 @@ def test_series_bucket(client: TestClient, store: FakeStore) -> None:
     assert bad.status_code == 422 and "add a unit" in bad.json()["detail"]
     assert client.get("/api/measurements/series", params={"device_id": "d1", "bucket": "500ms"}
                       ).status_code == 422  # fmt: skip
+
+
+def test_series_of_a_domain(client: TestClient, store: FakeStore) -> None:
+    params = {"domain": "poultry", "run_id": "r1", "bucket": "10s"}
+    body = client.get("/api/measurements/series", params=params).json()
+    assert body["domain"] == "poultry" and body["device_id"] is None
+    _, filters = store.calls[-1]
+    assert filters["domain"] == "poultry" and filters["run_id"] == "r1"
+    assert filters["device_id"] is None
+    for params in ({}, {"device_id": "d1", "domain": "poultry"}):  # exactly one of them
+        assert client.get("/api/measurements/series", params=params).status_code == 422
+
+
+def test_catalog_has_bands_and_rules(store: FakeStore, monkeypatch) -> None:
+    monkeypatch.chdir(REPO)
+    monkeypatch.delenv("ALERT_RULES", raising=False)
+    monkeypatch.delenv("DEVICES_CONFIG", raising=False)
+    store.down = True  # static: no database needed
+    body = TestClient(create_app(store=store)).get("/api/catalog").json()
+    types = {t["name"]: t for t in body["device_types"]}
+    oxygen = types["dissolved_oxygen_probe"]
+    assert oxygen["domain"] == "aquaculture" and oxygen["unit"] == "mg/L"
+    assert oxygen["bounds"]["minimum"] <= oxygen["normal"]["minimum"] < oxygen["normal"]["maximum"]
+    rules = {r["id"]: r for r in body["alert_rules"]}
+    assert rules["oxygen-low"]["condition"] == "below"
+    assert rules["oxygen-low"]["device_type"] == "dissolved_oxygen_probe"
+
+
+def test_catalog_follows_the_experiment_rules(store: FakeStore, monkeypatch) -> None:
+    monkeypatch.chdir(REPO)
+    monkeypatch.setenv("ALERT_RULES", RulesFile(schema_version=1, rules=[
+        Rule(id="r", device_type="ammonia_detector", above=20, clear_at=18)]).to_env())  # fmt: skip
+    (rule,) = TestClient(create_app(store=store)).get("/api/catalog").json()["alert_rules"]
+    assert (rule["threshold"], rule["clear_at"], rule["severity"]) == (20, 18, "warning")
 
 
 def test_not_found(client: TestClient) -> None:

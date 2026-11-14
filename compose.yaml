@@ -203,6 +203,8 @@ services:
     environment:
       <<: *database-env
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # The experiment's rules (set by `stack up`), shown by GET /api/catalog.
+      ALERT_RULES: ${ALERT_RULES:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
       interval: 15s
