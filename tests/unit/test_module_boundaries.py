@@ -17,6 +17,7 @@ ALLOWED = {
     "tools": {"core", "simulator"},  # control tool reads the device catalog
     "tui": {"core", "simulator"},  # the UI reads the device catalog (normal bands)
     "testing": {"core"},
+    "dashboard": {"core"},  # reads the API over HTTP: never storage, MQTT consumers or api
 }
 
 
