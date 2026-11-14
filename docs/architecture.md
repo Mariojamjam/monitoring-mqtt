@@ -5,9 +5,8 @@ telemetry to topics on a central MQTT broker. Subscribers declare their interest
 topic filters, and the broker routes each message to every matching subscription.
 Publishers and subscribers never communicate directly.
 
-This document describes what runs today in detail. For the overall picture, including the
-planned storage, alerts, API and dashboard, and how every part communicates, see
-[design.md](design.md).
+This document describes what runs today in detail. For the overall picture, how every
+part communicates (MQTT, HTTP, SQL), see [design.md](design.md).
 
 > This document describes what is currently implemented. It grows as components are added.
 
@@ -23,6 +22,7 @@ planned storage, alerts, API and dashboard, and how every part communicates, see
 | `smoke` service (profile `tools`) | Implemented | One-off end-to-end check started by `monitoring-mqtt test smoke`; never part of `stack up` |
 | `postgres`, `migrate`, `api`, `ingestion` services (role `storage`) | Implemented | History: PostgreSQL (volume `pgdata`), schema migrations, the FastAPI API (single owner of the database) and the MQTT → API bridge ([storage.md](storage.md), [api.md](api.md)) |
 | `alerts` service (role `alerts`) | Implemented | Alert engine: applies `config/alerts.yaml` to every measurement and publishes alert events on the broker ([alerts.md](alerts.md)) |
+| `dashboard` service (role `dashboard`) | Implemented | Streamlit dashboard on port 8501: history, alerts and run comparison, read from the API only; its own image ([dashboard.md](dashboard.md)) |
 | `control` service (profile `tools`) | Implemented | One-off live command to one device, started by `monitoring-mqtt device ...`; goes through the broker to the worker hosting the device |
 
 ## Configuration

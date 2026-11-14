@@ -27,9 +27,9 @@ from typing import Annotated, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from monitoring_mqtt.consumers.rules import RulesError, RulesFile, load_rules
-from monitoring_mqtt.core.durations import Duration
+from monitoring_mqtt.core.durations import Duration, Offset
 from monitoring_mqtt.core.ingest import MAX_BATCH_ITEMS
+from monitoring_mqtt.core.rules import RulesError, RulesFile, load_rules
 from monitoring_mqtt.core.topics import ALL_TELEMETRY_FILTER, domain_filter
 from monitoring_mqtt.simulator.behavior_config import BehaviorConfig
 from monitoring_mqtt.simulator.catalog import CatalogError, DeviceCatalog, load_catalog
@@ -112,6 +112,13 @@ class AlertsSection(_Section):
     rules: str = "config/alerts.yaml"
 
 
+class DashboardSection(_Section):
+    """The Streamlit dashboard (reads the API)."""
+
+    enabled: bool = True
+    refresh: Offset = 5.0  # live refresh; 0s turns it off
+
+
 class SimulationFile(_Section):
     schema_version: Literal[1]
     run: RunSection = Field(default_factory=RunSection)
@@ -122,6 +129,7 @@ class SimulationFile(_Section):
     behavior: BehaviorConfig = Field(default_factory=BehaviorConfig)
     storage: StorageSection = Field(default_factory=StorageSection)
     alerts: AlertsSection = Field(default_factory=AlertsSection)
+    dashboard: DashboardSection = Field(default_factory=DashboardSection)
 
 
 @dataclass(frozen=True)
@@ -163,9 +171,16 @@ class StackPlan:
     monitors: list[MonitorPlan]
     storage: bool = True  # postgres, migrate, api, ingestion
     alerts: bool = True  # alert engine
+    dashboard: bool = True
 
     def limited_to(
-        self, *, devices: bool, monitors: bool, storage: bool = True, alerts: bool = True
+        self,
+        *,
+        devices: bool,
+        monitors: bool,
+        storage: bool = True,
+        alerts: bool = True,
+        dashboard: bool = True,
     ) -> StackPlan:
         """The plan for one machine: services of roles it does not run get 0 replicas."""
         return StackPlan(
@@ -173,6 +188,7 @@ class StackPlan:
             [m if monitors else replace(m, replicas=0) for m in self.monitors],
             storage=self.storage and storage,
             alerts=self.alerts and alerts,
+            dashboard=self.dashboard and dashboard,
         )
 
 
@@ -187,6 +203,7 @@ class Simulation:
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     storage: StorageSection = field(default_factory=StorageSection)
     alerts: AlertsSection = field(default_factory=AlertsSection)
+    dashboard: DashboardSection = field(default_factory=DashboardSection)
     rules: RulesFile | None = None  # loaded when alerts are enabled
     source: Path = SIMULATION_FILE  # shown to the user; relative to the project when possible
 
@@ -320,6 +337,7 @@ def load_simulation(project_root: Path, config: Path | None = None) -> Simulatio
         build_monitor_plan(sim, catalog),
         storage=sim.storage.enabled,
         alerts=sim.alerts.enabled,
+        dashboard=sim.dashboard.enabled,
     )
     check_behavior(sim.behavior, catalog)
     rules = load_alert_rules(project_root, sim.alerts, catalog) if sim.alerts.enabled else None
@@ -331,6 +349,7 @@ def load_simulation(project_root: Path, config: Path | None = None) -> Simulatio
         behavior=sim.behavior,
         storage=sim.storage,
         alerts=sim.alerts,
+        dashboard=sim.dashboard,
         rules=rules,
         source=_display_path(project_root, path),
     )
@@ -387,7 +406,10 @@ def compose_env(sim: Simulation, run_id: str) -> dict[str, str]:
         "INGEST_FLUSH_INTERVAL_SECONDS": _number(sim.storage.flush_interval),
         "INGEST_BUFFER_LIMIT": str(sim.storage.buffer_limit),
         "ALERTS_REPLICAS": "1" if sim.plan.alerts else "0",
-        "ALERT_RULES": sim.rules.to_env() if sim.rules else "",
+        # The API shows the rules (catalog): none when the alert engine is off.
+        "ALERT_RULES": (sim.rules or RulesFile(schema_version=1)).to_env(),
+        "DASHBOARD_REPLICAS": "1" if sim.plan.dashboard else "0",
+        "DASHBOARD_REFRESH_SECONDS": _number(sim.dashboard.refresh),
     }
     for worker in sim.plan.workers:
         env[f"{worker.env_prefix}_REPLICAS"] = str(worker.replicas)
