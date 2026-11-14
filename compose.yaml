@@ -6,6 +6,7 @@ name: monitoring-mqtt
 x-app: &app
   build:
     context: .
+    target: app
   image: monitoring-mqtt/app:local
   restart: unless-stopped
   depends_on:
@@ -244,6 +245,35 @@ services:
       # The experiment's rules as JSON (set by `stack up`); empty = config/alerts.yaml.
       ALERT_RULES: ${ALERT_RULES:-}
 
+  # Dashboard (role `dashboard`, experiment `dashboard.enabled`): Streamlit, reading only
+  # the API (never MQTT, never the database). Its own image, so the device image stays
+  # small. It does not wait for the API: it shows a warning until the API answers.
+  dashboard:
+    build:
+      context: .
+      target: dashboard
+    image: monitoring-mqtt/dashboard:local
+    restart: unless-stopped
+    deploy:
+      replicas: ${DASHBOARD_REPLICAS:-1}
+    command: ["python", "-m", "monitoring_mqtt.dashboard"]
+    ports:
+      # Loopback only by default (DASHBOARD_BIND_ADDRESS / DASHBOARD_HOST_PORT in .env).
+      - "${DASHBOARD_BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_HOST_PORT:-8501}:8501"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # This stack's API, or DASHBOARD_API_URL (.env) when the API runs on another machine.
+      API_URL: ${DASHBOARD_API_URL:-http://api:8000}
+      DASHBOARD_REFRESH_SECONDS: ${DASHBOARD_REFRESH_SECONDS:-5}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
   # Forwards host.docker.internal:<port> to a tunnel listening on this machine's loopback
   # (MQTT_BROKER_HOST=127.0.0.1). Only needed with Docker Engine on Linux, where containers
   # cannot reach the host's loopback; `stack up` sets the replicas and the listen address
@@ -252,6 +282,7 @@ services:
   broker-relay:
     build:
       context: .
+      target: app
     image: monitoring-mqtt/app:local
     restart: unless-stopped
     network_mode: host

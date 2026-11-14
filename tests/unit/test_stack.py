@@ -25,6 +25,7 @@ HEALTHY_PS = (
     "device-poultry cccccc000003\n"
     "monitor-poultry dddddd000004\nmonitor-poultry eeeeee000005\n"
     "postgres ffffff000006\napi ffffff000007\ningestion ffffff000008\nalerts ffffff000009\n"
+    "dashboard ffffff00000a\n"
 )
 
 
@@ -197,12 +198,13 @@ def test_unusable_project_fails_before_calling_docker(
     assert docker.calls == []
 
 
-def test_storage_and_alerts_must_run_once() -> None:
+def test_storage_alerts_and_dashboard_must_run_once() -> None:
     plan = StackPlan([], [])
     problems = verify_stack(plan, {"postgres": ["a"], "api": ["b"], "ingestion": []})
     assert problems == [
         "ingestion: expected 1 container(s), found 0",
         "alerts: expected 1 container(s), found 0",
+        "dashboard: expected 1 container(s), found 0",
     ]
 
 
@@ -223,6 +225,7 @@ def test_verify_stack_accepts_zero_replicas() -> None:
         [MonitorPlan("all", "monitor-all", "monitoring/v1/#", 0)],
         storage=False,
         alerts=False,
+        dashboard=False,
     )
     assert verify_stack(plan, {"device-cattle": [], "monitor-all": []}) == []
 
@@ -234,6 +237,7 @@ def test_device_and_monitor_with_same_short_id_do_not_collide() -> None:
         [MonitorPlan("cattle", "monitor-cattle", "monitoring/v1/cattle/#", 1)],
         storage=False,
         alerts=False,
+        dashboard=False,
     )
     running = {"device-cattle": ["abcdef000001"], "monitor-cattle": ["abcdef000002"]}
     assert verify_stack(plan, running) == []
@@ -271,6 +275,9 @@ def test_single_machine_up_keeps_local_broker(stack_project: Path, monkeypatch) 
     assert env["MQTT_BROKER_HOST"] == "broker"
     assert env["BROKER_REPLICAS"] == "1"
     assert "warning" not in result.output
+    assert (env["DASHBOARD_REPLICAS"], env["DASHBOARD_REFRESH_SECONDS"]) == ("1", "5")
+    assert env["DASHBOARD_API_URL"] == "http://api:8000"
+    assert "http://127.0.0.1:8501" in result.output
 
 
 def test_up_run_id_option_overrides_config(stack_project: Path, monkeypatch) -> None:
@@ -293,6 +300,7 @@ def test_up_applies_alternative_experiment_file(stack_project: Path, monkeypatch
     experiment.write_text(
         "schema_version: 1\nworkers:\n  ph_bolus: {replicas: 1, devices_per_worker: 4}\n"
         "storage: {enabled: false}\nalerts: {enabled: false}\n"
+        "dashboard: {enabled: false}\n"
     )
     docker = use_docker(monkeypatch, FakeDocker("device-cattle ffffff000001\n"))
     result = invoke(stack_project, "up", "--config", str(experiment))
@@ -302,6 +310,8 @@ def test_up_applies_alternative_experiment_file(stack_project: Path, monkeypatch
     assert env["DEVICE_AQUACULTURE_REPLICAS"] == "0"
     assert "pc-a.yaml" in result.output
     assert (env["STORAGE_REPLICAS"], env["ALERTS_REPLICAS"]) == ("0", "0")
+    assert env["DASHBOARD_REPLICAS"] == "0"
+    assert env["ALERT_RULES"] == '{"schema_version":1}'  # the API shows no rules
     assert "disabled in the experiment" in result.output
 
 

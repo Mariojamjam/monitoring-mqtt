@@ -17,6 +17,7 @@ from pathlib import Path
 
 from monitoring_mqtt.cli.dockerhost import DockerHostError, inspect_docker_host
 from monitoring_mqtt.cli.machine import (
+    DASHBOARD,
     DOCKER_HOST_ALIAS,
     STORAGE,
     Machine,
@@ -261,6 +262,32 @@ def check_api(
     return [CheckResult("API", Status.FAIL, f"{url} answered HTTP {status}")]
 
 
+def check_dashboard(
+    explicit: Path | None,
+    fetch: Callable[[str], int] = fetch_status,
+    environment: str | None = None,
+) -> list[CheckResult]:
+    """The dashboard, when this machine runs the dashboard role."""
+    try:
+        machine = load_machine(resolve_project_root(explicit).path)
+    except (ProjectNotFoundError, MachineError):
+        return []  # already reported
+    if not machine.runs(DASHBOARD):
+        return []
+    environment = environment or detect_environment()
+    url = machine.dashboard_url
+    if not environment.startswith("host"):
+        return [CheckResult("Dashboard", Status.OK, f"not checked from {environment}; open {url}")]
+    try:
+        status = fetch(f"{url}/_stcore/health")
+    except OSError as exc:
+        hint = "start it with 'monitoring-mqtt stack up'"
+        return [CheckResult("Dashboard", Status.WARN, f"{url} unreachable ({exc}); {hint}")]
+    if status == 200:
+        return [CheckResult("Dashboard", Status.OK, f"{url} ready")]
+    return [CheckResult("Dashboard", Status.FAIL, f"{url} answered HTTP {status}")]
+
+
 def run_checks(
     project_dir: Path | None, run: Runner = run_command, connect: Connector = tcp_connect
 ) -> list[CheckResult]:
@@ -273,4 +300,5 @@ def run_checks(
         check_project(project_dir),
         *check_machine(project_dir, connect, run=run),
         *check_api(project_dir),
+        *check_dashboard(project_dir),
     ]
