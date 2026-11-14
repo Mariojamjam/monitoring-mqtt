@@ -53,6 +53,7 @@ class Stack:
     host: str
     port: int
     api_url: str = ""
+    dashboard_url: str = ""
 
     def api(self, path: str, **params) -> dict | list:
         """GET a JSON document from the API of the test stack."""
