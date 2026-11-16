@@ -2,6 +2,14 @@
 # The fixed project name lets the host and the Dev Container manage the same stack.
 name: monitoring-mqtt
 
+# Container logs rotate (3 files of 10 MB each per container), so long runs never fill the
+# disk, which matters on a Raspberry Pi's SD card.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 # Settings shared by every Python service built from the application image.
 x-app: &app
   build:
@@ -9,6 +17,7 @@ x-app: &app
     target: app
   image: monitoring-mqtt/app:local
   restart: unless-stopped
+  logging: *logging
   depends_on:
     # Startup convenience only: clients also reconnect if the broker restarts later.
     # Machines that use a remote broker start their services with --no-deps.
@@ -70,6 +79,7 @@ services:
       context: infra/mosquitto
     image: monitoring-mqtt/mosquitto:local
     restart: unless-stopped
+    logging: *logging
     deploy:
       # 0 on machines whose STACK_ROLES exclude the broker (they use a remote one).
       replicas: ${BROKER_REPLICAS:-1}
@@ -161,6 +171,9 @@ services:
   postgres:
     image: postgres:18.7-alpine
     restart: unless-stopped
+    logging: *logging
+    # Optional memory limits (.env), e.g. on a Raspberry Pi; 0 means none.
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-0}
     deploy:
       replicas: ${STORAGE_REPLICAS:-1}
     environment:
@@ -198,6 +211,7 @@ services:
       migrate:
         condition: service_completed_successfully
     command: ["python", "-m", "monitoring_mqtt.api"]
+    mem_limit: ${API_MEMORY_LIMIT:-0}
     ports:
       # Loopback only by default (API_BIND_ADDRESS / API_HOST_PORT in .env).
       - "${API_BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-8000}:8000"
@@ -254,6 +268,8 @@ services:
       target: dashboard
     image: monitoring-mqtt/dashboard:local
     restart: unless-stopped
+    logging: *logging
+    mem_limit: ${DASHBOARD_MEMORY_LIMIT:-0}
     deploy:
       replicas: ${DASHBOARD_REPLICAS:-1}
     command: ["python", "-m", "monitoring_mqtt.dashboard"]
@@ -285,6 +301,7 @@ services:
       target: app
     image: monitoring-mqtt/app:local
     restart: unless-stopped
+    logging: *logging
     network_mode: host
     deploy:
       replicas: ${BROKER_RELAY_REPLICAS:-0}
