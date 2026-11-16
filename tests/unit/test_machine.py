@@ -155,3 +155,16 @@ def test_experiment_contexts_and_the_api_seen_from_containers() -> None:
     assert remote.containers_api_url == "http://10.0.0.5:8000"
     with pytest.raises(MachineError, match="EXPERIMENT_DOCKER_CONTEXTS"):
         machine_from_env({"EXPERIMENT_DOCKER_CONTEXTS": "bad name"})
+
+
+@pytest.mark.parametrize("profile", ["gateway", "field"])
+def test_machine_profiles_are_valid(profile: str) -> None:
+    repo = Path(__file__).resolve().parents[2]
+    text = (repo / "config" / "machines" / f"{profile}.env.example").read_text()
+    machine = machine_from_env(parse_env_file(text))
+    if profile == "gateway":
+        assert machine.runs("broker") and machine.runs("storage") and not machine.runs("devices")
+        assert machine.bind_address == "0.0.0.0"
+    else:
+        assert machine.runs("devices") and machine.remote_broker
+        assert machine.containers_api_url.startswith("http://192.168.0.50")
