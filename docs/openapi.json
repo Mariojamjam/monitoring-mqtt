@@ -999,6 +999,93 @@
         }
       }
     },
+    "/api/runs/{run_id}/window": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "One run inside a time window",
+        "description": "Counts, delays (average and percentiles) and missing sequence numbers of the run's\nmeasurements generated in [`from`, `to`), and the alerts raised in it. Experiments use\nit to measure a fixed window after a warm-up. Both bounds are required.",
+        "operationId": "run_window_api_runs__run_id__window_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start, inclusive (ISO 8601 with time zone)",
+              "title": "From"
+            },
+            "description": "Start, inclusive (ISO 8601 with time zone)"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End, exclusive (ISO 8601 with time zone)",
+              "title": "To"
+            },
+            "description": "End, exclusive (ISO 8601 with time zone)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunWindow"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable; retry later"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/stats": {
       "get": {
         "tags": [
@@ -1321,6 +1408,74 @@
           "alert_rules"
         ],
         "title": "Catalog"
+      },
+      "Delays": {
+        "properties": {
+          "avg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg"
+          },
+          "p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50"
+          },
+          "p95": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95"
+          },
+          "p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P99"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          }
+        },
+        "type": "object",
+        "required": [
+          "avg",
+          "p50",
+          "p95",
+          "p99",
+          "max"
+        ],
+        "title": "Delays"
       },
       "Device": {
         "properties": {
@@ -2061,6 +2216,76 @@
           "alerts_by_severity"
         ],
         "title": "RunDetail"
+      },
+      "RunWindow": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Since",
+            "description": "Start of the window, inclusive (generation time)"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Until",
+            "description": "End of the window, exclusive"
+          },
+          "measurements": {
+            "type": "integer",
+            "title": "Measurements"
+          },
+          "devices": {
+            "type": "integer",
+            "title": "Devices"
+          },
+          "domains": {
+            "items": {
+              "$ref": "#/components/schemas/DomainCount"
+            },
+            "type": "array",
+            "title": "Domains"
+          },
+          "sequence_gaps": {
+            "type": "integer",
+            "title": "Sequence Gaps",
+            "description": "Missing sequence numbers inside the window"
+          },
+          "generated_to_received_ms": {
+            "$ref": "#/components/schemas/Delays",
+            "description": "Device → ingestion consumer"
+          },
+          "generated_to_stored_ms": {
+            "$ref": "#/components/schemas/Delays",
+            "description": "Device → database"
+          },
+          "alerts_raised": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Alerts Raised",
+            "description": "Alerts raised in the window, by severity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "since",
+          "until",
+          "measurements",
+          "devices",
+          "domains",
+          "sequence_gaps",
+          "generated_to_received_ms",
+          "generated_to_stored_ms",
+          "alerts_raised"
+        ],
+        "title": "RunWindow"
       },
       "Series": {
         "properties": {

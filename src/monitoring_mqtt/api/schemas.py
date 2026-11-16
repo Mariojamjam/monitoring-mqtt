@@ -129,6 +129,27 @@ class RunDetail(Run):
     alerts_by_severity: dict[str, int]
 
 
+class Delays(BaseModel):
+    avg: float | None
+    p50: float | None
+    p95: float | None
+    p99: float | None
+    max: float | None
+
+
+class RunWindow(BaseModel):
+    run_id: str
+    since: datetime = Field(description="Start of the window, inclusive (generation time)")
+    until: datetime = Field(description="End of the window, exclusive")
+    measurements: int
+    devices: int
+    domains: list[DomainCount]
+    sequence_gaps: int = Field(description="Missing sequence numbers inside the window")
+    generated_to_received_ms: Delays = Field(description="Device → ingestion consumer")
+    generated_to_stored_ms: Delays = Field(description="Device → database")
+    alerts_raised: dict[str, int] = Field(description="Alerts raised in the window, by severity")
+
+
 class Stats(BaseModel):
     measurements: int
     devices: int

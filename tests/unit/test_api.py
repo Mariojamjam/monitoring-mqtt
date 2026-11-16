@@ -64,7 +64,23 @@ class FakeStore:
         return None
 
     def get_run(self, run_id):
-        return None
+        return {"run_id": run_id} if run_id == "r1" else None
+
+    def run_window(self, run_id, since, until):
+        self.calls.append(("window", {"since": since, "until": until}))
+        delays = dict.fromkeys(("avg", "p50", "p95", "p99", "max"), 1.0)
+        return {
+            "run_id": run_id,
+            "since": since,
+            "until": until,
+            "measurements": 10,
+            "devices": 2,
+            "domains": [],
+            "sequence_gaps": 1,
+            "generated_to_received_ms": delays,
+            "generated_to_stored_ms": delays,
+            "alerts_raised": {"warning": 1},
+        }
 
 
 @pytest.fixture
@@ -212,3 +228,14 @@ def test_committed_reference_page_is_up_to_date(client: TestClient) -> None:
         "docs/api-reference.html is out of date: run "
         "`uv run python -m monitoring_mqtt.api.docs --html > docs/api-reference.html`"
     )
+
+
+def test_run_window(client: TestClient, store: FakeStore) -> None:
+    window = {"from": NOW.isoformat(), "to": (NOW + timedelta(minutes=2)).isoformat()}
+    body = client.get("/api/runs/r1/window", params=window).json()
+    assert body["measurements"] == 10 and body["generated_to_stored_ms"]["p95"] == 1.0
+    assert store.calls[-1][1]["since"] == NOW
+    assert client.get("/api/runs/r1/window", params={"from": window["from"]}).status_code == 422
+    reversed_window = {"from": window["to"], "to": window["from"]}
+    assert client.get("/api/runs/r1/window", params=reversed_window).status_code == 422
+    assert client.get("/api/runs/nope/window", params=window).status_code == 404
