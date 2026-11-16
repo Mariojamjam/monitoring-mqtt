@@ -46,6 +46,7 @@ from monitoring_mqtt.simulator.registration import (
     WorkerIdUnavailableError,
     acquire_worker_id,
 )
+from monitoring_mqtt.simulator.status import WorkerStatusReporter
 from monitoring_mqtt.simulator.worker import SimulationWorker
 
 logger = logging.getLogger("monitoring_mqtt.simulator")
@@ -145,10 +146,22 @@ def main() -> int:
     )
     plane = SimulationPlane(worker_id, settings, worker.submit)
     worker.attach_events(plane.publish_event)
+    reporter = WorkerStatusReporter(
+        worker_id=worker_id,
+        run_id=run_id,
+        hostname=hostname,
+        node=node,
+        qos=settings.qos,
+        counters=lambda: [d.counters() for d in devices],
+        client=plane.client,
+    )
+    reporter.install_will()
     plane.start()
+    reporter.start()
     try:
         worker.run(stop)
     finally:
+        reporter.stop()
         plane.stop()
         registration.release()
     return WORKER_ID_CONFLICT_EXIT if lost.is_set() else 0
