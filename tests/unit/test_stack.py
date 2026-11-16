@@ -276,7 +276,7 @@ def test_single_machine_up_keeps_local_broker(stack_project: Path, monkeypatch) 
     assert env["BROKER_REPLICAS"] == "1"
     assert "warning" not in result.output
     assert (env["DASHBOARD_REPLICAS"], env["DASHBOARD_REFRESH_SECONDS"]) == ("1", "5")
-    assert env["DASHBOARD_API_URL"] == "http://api:8000"
+    assert env["REMOTE_API_URL"] == "http://api:8000"
     assert "http://127.0.0.1:8501" in result.output
 
 

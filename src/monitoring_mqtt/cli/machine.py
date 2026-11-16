@@ -17,8 +17,12 @@ Docker Compose:
 - ``API_BIND_ADDRESS`` / ``API_HOST_PORT``: where this machine publishes the API
   (default ``127.0.0.1:8000``);
 - ``DASHBOARD_BIND_ADDRESS`` / ``DASHBOARD_HOST_PORT``: where this machine publishes the
-  dashboard (default ``127.0.0.1:8501``); ``DASHBOARD_API_URL``: the API it reads, when
-  this machine does not run the storage role (default: this stack's API);
+  dashboard (default ``127.0.0.1:8501``);
+- ``REMOTE_API_URL``: the API on another machine, read by this machine's dashboard and
+  experiment probe when it does not run the storage role (default: this stack's API);
+- ``EXPERIMENT_DOCKER_CONTEXTS``: Docker contexts of the other machines of an experiment
+  (e.g. ``pi``, created with ``docker context create pi --docker host=ssh://pi@…``):
+  experiments sample their containers and run failure actions on them;
 - ``NODE_NAME``: label of this machine in worker claims and monitor status (default: the
   hostname where the CLI runs).
 """
@@ -96,7 +100,13 @@ class Machine:
     api_host_port: int = API_PORT
     dashboard_bind_address: str = DEFAULT_BIND_ADDRESS
     dashboard_host_port: int = DASHBOARD_PORT
-    dashboard_api_url: str | None = None  # None: this stack's API
+    remote_api_url: str | None = None  # None: this stack's API
+    experiment_contexts: tuple[str, ...] = ()  # Docker contexts of the other machines
+
+    @property
+    def containers_api_url(self) -> str:
+        """The API as seen from this machine's containers."""
+        return self.remote_api_url or LOCAL_API_URL
 
     @property
     def api_url(self) -> str:
@@ -182,7 +192,7 @@ class Machine:
             "API_HOST_PORT": str(self.api_host_port),
             "DASHBOARD_BIND_ADDRESS": self.dashboard_bind_address,
             "DASHBOARD_HOST_PORT": str(self.dashboard_host_port),
-            "DASHBOARD_API_URL": self.dashboard_api_url or LOCAL_API_URL,
+            "REMOTE_API_URL": self.containers_api_url,
         }
 
 
@@ -242,13 +252,21 @@ def _bind_address(raw: str, name: str = "MQTT_BIND_ADDRESS") -> str:
 def _api_url(raw: str, roles: frozenset[str]) -> str | None:
     url = raw.strip().rstrip("/")
     if url and not re.match(r"^https?://[^\s/]+(/\S*)?$", url):
-        raise MachineError(f"DASHBOARD_API_URL={url!r} is not an http(s) URL")
+        raise MachineError(f"REMOTE_API_URL={url!r} is not an http(s) URL")
     if not url and DASHBOARD in roles and STORAGE not in roles:
         raise MachineError(
-            "STACK_ROLES includes 'dashboard' but not 'storage', so set DASHBOARD_API_URL to "
-            "the API the dashboard should read (e.g. http://192.168.0.10:8000)"
+            "STACK_ROLES includes 'dashboard' but not 'storage', so set REMOTE_API_URL to "
+            "the API on the storage machine (e.g. http://192.168.0.10:8000)"
         )
     return url or None
+
+
+def _contexts(raw: str) -> tuple[str, ...]:
+    names = tuple(n.strip() for n in raw.split(",") if n.strip())
+    for name in names:
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", name):
+            raise MachineError(f"EXPERIMENT_DOCKER_CONTEXTS: invalid context name {name!r}")
+    return names
 
 
 def _node(raw: str) -> str:
@@ -286,7 +304,8 @@ def machine_from_env(env: Mapping[str, str]) -> Machine:
             env.get("DASHBOARD_BIND_ADDRESS", ""), "DASHBOARD_BIND_ADDRESS"
         ),
         dashboard_host_port=_port(env, "DASHBOARD_HOST_PORT", DASHBOARD_PORT),
-        dashboard_api_url=_api_url(env.get("DASHBOARD_API_URL", ""), roles),
+        remote_api_url=_api_url(env.get("REMOTE_API_URL", ""), roles),
+        experiment_contexts=_contexts(env.get("EXPERIMENT_DOCKER_CONTEXTS", "")),
     )
 
 

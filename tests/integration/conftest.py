@@ -53,7 +53,7 @@ def stack() -> Iterator[Stack]:
         "API_HOST_PORT": str(free_port()),
         "DASHBOARD_BIND_ADDRESS": "127.0.0.1",
         "DASHBOARD_HOST_PORT": str(free_port()),
-        "DASHBOARD_API_URL": "",
+        "REMOTE_API_URL": "",
     }
     # In-process Compose calls (from the cli package) must also target the isolated stack.
     os.environ[PROJECT_OVERRIDE_VARIABLE] = PROJECT

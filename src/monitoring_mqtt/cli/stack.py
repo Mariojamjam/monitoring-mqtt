@@ -337,7 +337,7 @@ def print_experiment(
     if sim.plan.dashboard:
         refresh = sim.dashboard.refresh
         live = f"live every {human_duration(refresh)}" if refresh else "live refresh off"
-        api = machine.dashboard_api_url or "this stack's API"
+        api = machine.remote_api_url or "this stack's API"
         table.add_row("dashboard", f"on: {machine.dashboard_url} ({live}; reads {api})")
     else:
         table.add_row("dashboard", "off" + _off_reason(sim.dashboard.enabled, machine, DASHBOARD))

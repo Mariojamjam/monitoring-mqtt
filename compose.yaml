@@ -263,8 +263,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      # This stack's API, or DASHBOARD_API_URL (.env) when the API runs on another machine.
-      API_URL: ${DASHBOARD_API_URL:-http://api:8000}
+      # This stack's API, or REMOTE_API_URL (.env) when the API runs on another machine.
+      API_URL: ${REMOTE_API_URL:-http://api:8000}
       DASHBOARD_REFRESH_SECONDS: ${DASHBOARD_REFRESH_SECONDS:-5}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=2)"]
