@@ -107,7 +107,8 @@ without the CLI.
 | Database | `postgres` | PostgreSQL + SQLAlchemy/Alembic | Durable history, owned by the API | implemented |
 | API | `api` | `api` (FastAPI) | Single entry point to the database: receives events to store and answers queries | implemented |
 | Dashboard | `dashboard` | `dashboard` (Streamlit) | Historical charts, alerts and run comparison, read from the API | implemented |
-| CLI | host or Dev Container | `cli` | Applies the experiment and machine settings to Compose | implemented |
+| Experiment probe | `experiment-probe` (one-off) | `experiments.probe` | Measures one experiment run through the broker (worker and monitor status, `$SYS`) and the API | implemented |
+| CLI | host or Dev Container | `cli` | Applies the experiment and machine settings to Compose; runs experiment scenarios | implemented |
 | Relay | `broker-relay` (optional) | `tools.relay` | Lets containers reach a broker tunnel on the host's loopback | implemented |
 
 Shared contract: every component that speaks MQTT builds and validates topics and payloads

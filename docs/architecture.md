@@ -23,6 +23,7 @@ part communicates (MQTT, HTTP, SQL), see [design.md](design.md).
 | `postgres`, `migrate`, `api`, `ingestion` services (role `storage`) | Implemented | History: PostgreSQL (volume `pgdata`), schema migrations, the FastAPI API (single owner of the database) and the MQTT → API bridge ([storage.md](storage.md), [api.md](api.md)) |
 | `alerts` service (role `alerts`) | Implemented | Alert engine: applies `config/alerts.yaml` to every measurement and publishes alert events on the broker ([alerts.md](alerts.md)) |
 | `dashboard` service (role `dashboard`) | Implemented | Streamlit dashboard on port 8501: history, alerts and run comparison, read from the API only; its own image ([dashboard.md](dashboard.md)) |
+| `experiment-probe` service (profile `tools`) | Implemented | One-off observer started by `monitoring-mqtt experiment run`: snapshots worker and monitor counters, samples the broker statistics and asks the API what was stored in the measured window ([experiments.md](experiments.md)) |
 | `control` service (profile `tools`) | Implemented | One-off live command to one device, started by `monitoring-mqtt device ...`; goes through the broker to the worker hosting the device |
 
 ## Configuration

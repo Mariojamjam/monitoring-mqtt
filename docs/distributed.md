@@ -28,7 +28,8 @@ Each machine describes its part in its own `.env` (git-ignored, copied from
 | `MQTT_HOST_PORT` | `1883` | Port the local broker is published on |
 | `API_BIND_ADDRESS` / `API_HOST_PORT` | `127.0.0.1` / `8000` | Where the API is published (`storage` role) |
 | `DASHBOARD_BIND_ADDRESS` / `DASHBOARD_HOST_PORT` | `127.0.0.1` / `8501` | Where the dashboard is published (`dashboard` role) |
-| `DASHBOARD_API_URL` | this stack's API | The API the dashboard reads; required when this machine runs `dashboard` without `storage` |
+| `REMOTE_API_URL` | this stack's API | The API on another machine, read by the dashboard and by experiments; required when this machine runs `dashboard` without `storage` |
+| `EXPERIMENT_DOCKER_CONTEXTS` | empty | Docker contexts of the other machines of an experiment, which experiments sample and act on ([experiments.md](experiments.md)) |
 | `NODE_NAME` | hostname where the CLI runs | Label of this machine in worker claims and monitor status. Set it in a Dev Container, whose hostname is not the machine's |
 
 The CLI checks the combination before calling Docker. A machine either runs the broker
@@ -79,7 +80,7 @@ machine would take over the first one's session.
 ```dotenv
 STACK_ROLES=dashboard
 MQTT_BROKER_HOST=192.168.0.50
-DASHBOARD_API_URL=http://192.168.0.60:8000
+REMOTE_API_URL=http://192.168.0.60:8000
 ```
 
 The dashboard never speaks MQTT; it needs only the API. Any number of dashboards may run.

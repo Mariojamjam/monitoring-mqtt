@@ -64,10 +64,12 @@ Dependencies are split as follows:
   `uvicorn`, `httpx`, `sqlalchemy`, `alembic`, `psycopg`
 - **Dashboard group (`dashboard`):** `streamlit`, `pandas`, `altair`. Only the
   `dashboard` image installs it, so the image every device container runs stays small.
+- **Experiments group (`experiments`):** `matplotlib`, `pandas`, for `experiment report`
+  on the host; no image installs it.
 - **Development group (`dev`):** `pytest`, `ruff`
 
-`uv sync` installs both groups (`default-groups` in `pyproject.toml`), since the dashboard
-has unit tests. To add a dependency, use `uv add <package>`, `uv add --group dashboard
+`uv sync` installs every group (`default-groups` in `pyproject.toml`), since the dashboard
+and the experiment report have unit tests. To add a dependency, use `uv add <package>`, `uv add --group dashboard
 <package>` or `uv add --dev <package>` for tooling. These commands update both
 `pyproject.toml` and `uv.lock`.
 
@@ -148,7 +150,7 @@ MQTT_HOST=127.0.0.1 PUBLISH_INTERVAL_SECONDS=1 uv run python -m monitoring_mqtt.
 | Experiment | `config/simulation.yaml` (versioned) | run id, seed, log level, QoS, keepalive, clean session, reconnect backoff, publish interval, workers, monitors, behaviour, storage, alerts, dashboard |
 | Alert rules | `config/alerts.yaml` (versioned, baked into the image; `stack up` passes the experiment's rules as `ALERT_RULES`) | thresholds, severity, `after`, hysteresis |
 | Device catalog | `config/devices.yaml` (versioned, baked into the image) | types, domains, metrics, units, generators, normal bands, anomaly targets |
-| Machine | `.env` (git-ignored, from `.env.example`) | `STACK_ROLES`, `MQTT_BROKER_HOST`, `MQTT_BROKER_PORT`, `MQTT_BIND_ADDRESS`, `MQTT_HOST_PORT`, `NODE_NAME`, `SMOKE_TIMEOUT_SECONDS`, `API_BIND_ADDRESS`, `API_HOST_PORT`, `DASHBOARD_BIND_ADDRESS`, `DASHBOARD_HOST_PORT`, `DASHBOARD_API_URL`, `POSTGRES_PASSWORD` |
+| Machine | `.env` (git-ignored, from `.env.example`) | `STACK_ROLES`, `MQTT_BROKER_HOST`, `MQTT_BROKER_PORT`, `MQTT_BIND_ADDRESS`, `MQTT_HOST_PORT`, `NODE_NAME`, `SMOKE_TIMEOUT_SECONDS`, `API_BIND_ADDRESS`, `API_HOST_PORT`, `DASHBOARD_BIND_ADDRESS`, `DASHBOARD_HOST_PORT`, `REMOTE_API_URL`, `EXPERIMENT_DOCKER_CONTEXTS`, `POSTGRES_PASSWORD` |
 | Contract and internals | code (documented) | MQTT 3.1.1, port 1883, `retain=false`, topics, schema, validation limits |
 
 `monitoring-mqtt stack up` turns `config/simulation.yaml` into the environment variables
@@ -178,9 +180,10 @@ with `uv run`:
 | `ALERT_RULES` | alerts, api | empty: `ALERT_RULES_FILE` (`config/alerts.yaml`) | `alerts.rules`, loaded and validated, as JSON (no rules when alerts are disabled) |
 | `DATABASE_URL` | api, migrate | `postgresql+psycopg://monitoring:monitoring@localhost:5432/monitoring` | no (Compose builds it from `POSTGRES_PASSWORD`) |
 | `API_PORT` | api | `8000` | no |
-| `API_URL` | dashboard | `http://127.0.0.1:8000` | no (Compose: `http://api:8000`, or `DASHBOARD_API_URL` from `.env`) |
+| `API_URL` | dashboard | `http://127.0.0.1:8000` | no (Compose: `http://api:8000`, or `REMOTE_API_URL` from `.env`) |
 | `DASHBOARD_REFRESH_SECONDS` | dashboard | `5` | `dashboard.refresh` (`0` turns live refresh off) |
 | `SMOKE_TIMEOUT_SECONDS` | smoke | `10` | no (machine setting, `.env`) |
+| `PROBE_RUN_ID`, `PROBE_EXPECTED_DEVICES`, `PROBE_WARMUP_SECONDS`, `PROBE_DURATION_SECONDS`, `PROBE_OBSERVE_TELEMETRY` | experiment-probe | -, `1`, `30`, `120`, `false` | no (set per run by `experiment run` from the scenario) |
 | `SMOKE_TELEMETRY_WINDOW_SECONDS` | smoke | `15` | derived: 2 × publish interval + 5 s |
 | `SMOKE_REQUIRE_TELEMETRY` | smoke | `true` | no (`false` when this machine runs no devices) |
 
@@ -246,6 +249,10 @@ through the API and the dashboard.
 | `test_7_storage.py` | The migrated schema matches the code; everything the observer saw is stored; a repeated event is stored once; the three times are in order; API, database or ingestion consumer down for 5 s: nothing lost |
 | `test_8_alerts.py` | A scheduled anomaly raises and clears an alert within its ground truth episode; a live anomaly is alerted and stored; no alert without anomaly; an open alert survives an engine restart; the queries reflect the run |
 | `test_9_dashboard.py` | The dashboard container is healthy; every page renders from the real API with the run's data; stopping the dashboard affects no other service |
+| `test_10_experiments.py` | A two-point scenario with a failure action runs end to end on the test stack (every metric present, nothing lost), and its report is written |
+
+Files run in their numeric order (`test_2` before `test_10`): the last one starts the stack
+again with its own experiment files.
 
 Inside the Dev Container, whose `localhost` is not the host's, the tests join the test
 network and reach the broker as `broker:1883`. Set `IT_KEEP_STACK=1` to keep the test stack
@@ -289,7 +296,7 @@ src/monitoring_mqtt/
 │   ├── ingest.py        # HTTP ingestion batches (consumer → API)
 │   ├── rules.py         # alert rules (YAML): read by the engine, the CLI and the API
 │   ├── durations.py     # "30s", "2m"… parsing
-│   ├── status.py        # observability plane: monitor status topic and payload
+│   ├── status.py        # observability plane: monitor and worker status topics and payloads
 │   ├── config.py        # environment configuration
 │   ├── mqtt.py          # Paho client factory, reconnection
 │   ├── identity.py      # hostname-derived ids
@@ -303,6 +310,7 @@ src/monitoring_mqtt/
 │   ├── behavior_config.py # the experiment's `behavior` section (durations, faults)
 │   ├── behavior.py      # episodes per device: random, scheduled, live commands
 │   ├── plane.py         # worker's simulation plane client (events, commands)
+│   ├── status.py        # worker status: per-device publisher counters (retained)
 │   ├── device.py        # VirtualDevice: own MQTT client, sequence, generator
 │   ├── identity.py      # worker_id and device_id
 │   ├── registration.py  # claims the worker id in the broker registry
@@ -336,6 +344,12 @@ src/monitoring_mqtt/
 │   ├── settings.py      # API_URL, DASHBOARD_REFRESH_SECONDS
 │   └── views/           # overview, devices, alerts, runs (not `pages/`: Streamlit
 │                        # would turn that folder into its own navigation)
+├── experiments/         # scenarios, probe, metrics, results, report
+│   ├── scenario.py      # scenario files: sweep, overrides, actions (Pydantic)
+│   ├── probe.py         # the probe (runs as `experiment-probe`): measures one run
+│   ├── metrics.py       # pure: one row of metrics per run, saturation
+│   ├── results.py       # results folder: manifest, runs.csv/jsonl
+│   └── report.py        # summary.csv, charts and report.md (pandas, matplotlib)
 ├── testing/
 │   └── smoke.py         # end-to-end smoke check (runs as the `smoke` service)
 ├── tui/                 # read-only terminal UI (Textual)
@@ -357,6 +371,7 @@ src/monitoring_mqtt/
     ├── dockerhost.py    # Docker Desktop vs Engine: what host.docker.internal reaches
     ├── tui.py           # monitoring-mqtt tui (starts the `tui` service)
     ├── dashboard.py     # monitoring-mqtt dashboard (opens it in the browser)
+    ├── experiment.py    # experiment list/run/report: runner, docker stats, actions
     ├── compose.py       # docker compose runner (argv list, exit code preserved)
     ├── simulation.py    # config/simulation.yaml → validated experiment → Compose variables
     ├── testing.py       # test unit / integration / smoke
@@ -364,4 +379,6 @@ src/monitoring_mqtt/
 tests/unit/              # unit tests (no Docker, no broker)
 tests/integration/       # integration tests (isolated stack: monitoring-mqtt-it)
 config/examples/         # ready-made experiments (anomalies, instability, faults)
+experiments/             # experiment scenarios (monitoring-mqtt experiment run <name>)
+results/                 # experiment campaigns (git-ignored)
 ```

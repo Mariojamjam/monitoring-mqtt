@@ -22,7 +22,9 @@ All values are **synthetic**. They are not veterinary or clinical reference valu
 > only component that touches the database), and an alert engine publishes derived alerts
 > on the broker, evaluated against the simulation's ground truth. A Streamlit dashboard
 > shows the history: series against the normal band and the alert thresholds, alert
-> timelines and runs side by side, read from the API only.
+> timelines and runs side by side, read from the API only. Versioned experiment scenarios
+> (scale, worker granularity, publish frequency, QoS, fan-out, failures) run from the CLI,
+> are measured from the outside and turn into tables and charts.
 
 ## Getting started
 
@@ -88,6 +90,7 @@ monitoring-mqtt dashboard                       # the history in the browser (ht
 curl -s http://127.0.0.1:8000/api/stats         # the stored history (reference: /docs)
 monitoring-mqtt stack logs alerts               # alerts raised and cleared
 monitoring-mqtt test smoke                      # end-to-end check of the running stack
+monitoring-mqtt experiment run quick            # a measured experiment (about 3 minutes)
 monitoring-mqtt stack down
 ```
 
@@ -198,6 +201,9 @@ applies the file.
 | `monitoring-mqtt stack down [--volumes]` | Stop and remove the stack containers and network; the stored history is kept unless `--volumes` (asks first) |
 | `monitoring-mqtt stack status` | Show the state of every service |
 | `monitoring-mqtt stack logs [SERVICE] [--no-follow] [-n N]` | Show logs; follows by default, Ctrl+C stops following |
+| `monitoring-mqtt experiment list` | List the experiment scenarios in `experiments/` |
+| `monitoring-mqtt experiment run SCENARIO [-r N] [--duration D] [--warmup D] [--resume DIR] [--dry-run]` | Run a scenario: one stack per sweep point and repetition, measured by the probe; results in `results/<scenario>/<campaign>/` |
+| `monitoring-mqtt experiment report DIR` | Aggregate a campaign: `summary.csv`, charts and `report.md` |
 | `monitoring-mqtt test unit [PYTEST ARGS]` | Run the unit tests; extra arguments go to pytest, e.g. `-k topics` |
 | `monitoring-mqtt test integration [PYTEST ARGS]` | Run the integration suite on an isolated stack (Docker, about 5 minutes); your stack is not touched |
 | `monitoring-mqtt test smoke [--config FILE]` | Check the broker this machine uses end to end from a container; exit code 0 means it passed |
@@ -224,6 +230,7 @@ is up, it keeps running without the CLI.
 - [HTTP API](docs/api.md): routes, pagination, examples; interactive Scalar reference at `/docs` and as a [stand-alone page](docs/api-reference.html) ([OpenAPI](docs/openapi.json)).
 - [Alerts](docs/alerts.md): rules, states, topics, restarts and evaluation against the ground truth.
 - [Dashboard](docs/dashboard.md): pages, live refresh and caching, why it only talks to the API.
+- [Experiments](docs/experiments.md): scenarios, how a run is measured, metric definitions, reports, experiments across machines.
 - [Failures and recovery](docs/failures.md): how to provoke each failure, how it is detected and what happens to the data, with measured results.
 - [MQTT contract](docs/mqtt-contract.md): topics, payload schema, identities and QoS semantics.
 - [Development guide](docs/development.md): environment setup, configuration, tests and code quality.
@@ -260,4 +267,5 @@ is up, it keeps running without the CLI.
 
 Python 3.12 · uv · Typer + Rich · Textual · Eclipse Paho MQTT · Pydantic · Eclipse
 Mosquitto · FastAPI + Uvicorn · SQLAlchemy 2 + Alembic · PostgreSQL 18 (psycopg 3) · HTTPX ·
-Scalar (API reference) · Streamlit + Altair + pandas · Docker Compose V2.
+Scalar (API reference) · Streamlit + Altair + pandas · matplotlib (experiment reports) ·
+Docker Compose V2.

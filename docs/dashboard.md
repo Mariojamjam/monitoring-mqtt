@@ -78,7 +78,7 @@ database down, the API answers 503 and the dashboard behaves the same way.
 | `config/simulation.yaml` | `dashboard.enabled` | `true` |
 | `config/simulation.yaml` | `dashboard.refresh`: live refresh (`0s` turns it off) | `5s` |
 | `.env` | `DASHBOARD_BIND_ADDRESS`, `DASHBOARD_HOST_PORT`: where it is published | `127.0.0.1`, `8501` |
-| `.env` | `DASHBOARD_API_URL`: the API it reads, when the API runs on another machine | this stack's API |
+| `.env` | `REMOTE_API_URL`: the API it reads, when the API runs on another machine | this stack's API |
 | `.env` | `STACK_ROLES`: includes `dashboard` on the machine that runs it | every role |
 
 Like the API, the dashboard has no authentication: it is published on the loopback

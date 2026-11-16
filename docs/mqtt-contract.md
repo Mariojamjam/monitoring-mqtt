@@ -264,6 +264,7 @@ Status payload (UTF-8 JSON):
   "counters": {
     "received": 1532,
     "invalid": 2,
+    "duplicates": 0,
     "devices_seen": 20,
     "by_domain": {"poultry": 1532},
     "latency_ms": {"last": 1.8, "avg": 2.1, "p95": 3.4},
@@ -286,12 +287,56 @@ Status payload (UTF-8 JSON):
 
 - `node` is the machine label (`NODE_NAME`, set by the CLI to the hostname of the machine
   that started the stack). Worker claims carry the same field. It is `null` when unknown.
+- `received` counts every delivery; `duplicates` those of an `event_id` the monitor had
+  already received (it remembers the latest 256 per device). QoS 1 may deliver a message
+  more than once.
 - `latency_ms` covers the latest 1000 messages. It is only meaningful when device and
   monitor clocks are synchronized.
 - `recent` holds the latest 10 valid messages the monitor received, oldest first: what was
   actually delivered to this subscriber. It is refreshed with every status (every 5 s).
 - An observer that subscribes to `monitoring/status/v1/monitors/+` receives the current
   status of every monitor at once (retained), then every change.
+
+### Worker status
+
+Device workers announce what their devices did, the same way (retained, Last Will
+`offline`, `stopped` then removed on a clean shutdown, refreshed every 5 s), on their
+simulation-plane connection:
+
+```text
+monitoring/status/v1/workers/{worker_id}
+```
+
+```json
+{
+  "schema_version": 1,
+  "worker_id": "3f9a1c",
+  "run_id": "run-20261116T120000Z",
+  "node": "pc-lab-2",
+  "hostname": "3f9a1c2b7e10",
+  "state": "online",
+  "qos": 1,
+  "started_at": "2026-11-16T12:00:00Z",
+  "updated_at": "2026-11-16T12:05:00Z",
+  "devices": [
+    {"device_id": "poultry-3f9a1c-001", "generated": 60, "published": 60, "acked": 60,
+     "failed": 0}
+  ]
+}
+```
+
+Counters since the worker started, per device:
+
+| Field | Meaning |
+|---|---|
+| `generated` | Its latest sequence number |
+| `published` | Handed to the MQTT client |
+| `acked` | Confirmed: the broker's PUBACK with QoS 1; written to the socket with QoS 0 |
+| `failed` | Not sent: disconnected, or refused by the client |
+
+`generated` minus `published` minus `failed` were withheld by the simulation (delays not
+yet released, simulated disconnections). Experiments compare these counters with what the
+monitors received and what was stored ([experiments.md](experiments.md)).
 
 ## Simulation plane
 
