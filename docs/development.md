@@ -150,7 +150,7 @@ MQTT_HOST=127.0.0.1 PUBLISH_INTERVAL_SECONDS=1 uv run python -m monitoring_mqtt.
 | Experiment | `config/simulation.yaml` (versioned) | run id, seed, log level, QoS, keepalive, clean session, reconnect backoff, publish interval, workers, monitors, behaviour, storage, alerts, dashboard |
 | Alert rules | `config/alerts.yaml` (versioned, baked into the image; `stack up` passes the experiment's rules as `ALERT_RULES`) | thresholds, severity, `after`, hysteresis |
 | Device catalog | `config/devices.yaml` (versioned, baked into the image) | types, domains, metrics, units, generators, normal bands, anomaly targets |
-| Machine | `.env` (git-ignored, from `.env.example`) | `STACK_ROLES`, `MQTT_BROKER_HOST`, `MQTT_BROKER_PORT`, `MQTT_BIND_ADDRESS`, `MQTT_HOST_PORT`, `NODE_NAME`, `SMOKE_TIMEOUT_SECONDS`, `API_BIND_ADDRESS`, `API_HOST_PORT`, `DASHBOARD_BIND_ADDRESS`, `DASHBOARD_HOST_PORT`, `REMOTE_API_URL`, `EXPERIMENT_DOCKER_CONTEXTS`, `POSTGRES_PASSWORD` |
+| Machine | `.env` (git-ignored, from `.env.example`) | `STACK_ROLES`, `MQTT_BROKER_HOST`, `MQTT_BROKER_PORT`, `MQTT_BIND_ADDRESS`, `MQTT_HOST_PORT`, `NODE_NAME`, `SMOKE_TIMEOUT_SECONDS`, `API_BIND_ADDRESS`, `API_HOST_PORT`, `DASHBOARD_BIND_ADDRESS`, `DASHBOARD_HOST_PORT`, `REMOTE_API_URL`, `EXPERIMENT_DOCKER_CONTEXTS`, `POSTGRES_PASSWORD`, `POSTGRES_MEMORY_LIMIT`, `API_MEMORY_LIMIT`, `DASHBOARD_MEMORY_LIMIT` |
 | Contract and internals | code (documented) | MQTT 3.1.1, port 1883, `retain=false`, topics, schema, validation limits |
 
 `monitoring-mqtt stack up` turns `config/simulation.yaml` into the environment variables
@@ -272,8 +272,10 @@ Before submitting changes, `uv run ruff check .`, `uv run ruff format --check .`
 
 GitHub Actions runs the same checks on every push to `main` and on pull requests
 (`.github/workflows/ci.yml`), with the locked dependencies and the same uv version as the
-Dev Container. A second job then runs the integration suite on the runner's Docker and,
-if it fails, attaches the test stack's logs to the run.
+Dev Container. It also checks that every locked dependency of both images exists as a
+prebuilt 64-bit ARM package (Raspberry Pi). Two jobs follow: one builds the app, dashboard
+and broker images for `linux/arm64` (QEMU), the other runs the integration suite on the
+runner's Docker and, if it fails, attaches the test stack's logs to the run.
 
 ## Layout
 
@@ -379,6 +381,7 @@ src/monitoring_mqtt/
 tests/unit/              # unit tests (no Docker, no broker)
 tests/integration/       # integration tests (isolated stack: monitoring-mqtt-it)
 config/examples/         # ready-made experiments (anomalies, instability, faults)
+config/machines/         # .env profiles: gateway (e.g. Raspberry Pi) and field machine
 experiments/             # experiment scenarios (monitoring-mqtt experiment run <name>)
 results/                 # experiment campaigns (git-ignored)
 ```

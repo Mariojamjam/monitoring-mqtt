@@ -191,7 +191,7 @@ applies the file.
 |---|---|
 | `monitoring-mqtt --help` | Show available commands |
 | `monitoring-mqtt version` | Show the installed version |
-| `monitoring-mqtt doctor` | Check the environment (host or Dev Container), Python, uv, Docker (including the daemon ID), Compose, the project directory, this machine's roles, the broker connection, the API and the dashboard |
+| `monitoring-mqtt doctor` | Check the environment (host or Dev Container), Python, uv, Docker (including the daemon ID), Compose, the project directory, this machine's roles, the broker connection, the API, the dashboard and the clock |
 | `monitoring-mqtt stack up [--build] [--config FILE] [--run-id ID]` | Apply `config/simulation.yaml` (or `FILE`), start this machine's part of the stack in the background, wait until it is healthy, then print and verify the device topology |
 | `monitoring-mqtt stack workers` | List the device workers registered in the broker, from every machine |
 | `monitoring-mqtt tui [--config FILE]` | Open the read-only terminal UI: who publishes, the broker and who consumes, live |
@@ -236,6 +236,7 @@ is up, it keeps running without the CLI.
 - [Development guide](docs/development.md): environment setup, configuration, tests and code quality.
 - [Terminal UI](docs/tui.md): screens, keys, data sources and demonstration scenarios.
 - [Running on several machines](docs/distributed.md): broker on one machine (for example a Raspberry Pi), devices and monitors on others.
+- [Deploying on a Raspberry Pi](docs/deploy-raspberry-pi.md): step by step, with `.env` profiles for the gateway and the field machines.
 
 ## Limitations
 

@@ -177,9 +177,14 @@ side are not supported.
 
 ## Raspberry Pi
 
+The step-by-step guide, with ready-made `.env` files for a gateway (broker, history,
+alerts, dashboard) and a field machine (devices, monitors), is
+[deploy-raspberry-pi.md](deploy-raspberry-pi.md). In short:
+
 - Use a 64-bit OS with Docker Engine and the Compose plugin. The images used by the stack
-  (`eclipse-mosquitto`, `python:3.12-slim`, `uv`) are published for `arm64`, and every
-  machine builds the project images locally with `stack up --build`.
+  (`eclipse-mosquitto`, `python:3.12-slim`, `uv`, `postgres`) are published for `arm64`,
+  CI builds the project images for `arm64`, and every machine builds them locally with
+  `stack up --build`.
 - Install the CLI with `python scripts/bootstrap.py`, as on any other host.
 - Allow incoming TCP connections on the broker port (1883) in the Pi's firewall.
 - Prefer a wired connection, or record the network used, because it affects latency and
@@ -191,6 +196,10 @@ Monitors compute latency as the time of arrival minus the device timestamp. With
 and monitors on different machines, latency is only meaningful when their clocks are
 synchronized. Enable NTP on every machine, preferably against the same server. A Raspberry
 Pi has no hardware clock and depends on NTP after every boot.
+
+`monitoring-mqtt doctor` reports whether this machine's clock is synchronized
+(`timedatectl`) and, with `REMOTE_API_URL`, its difference from the API's machine
+(from the HTTP `Date` header, to about one second).
 
 ## Security and limits
 
