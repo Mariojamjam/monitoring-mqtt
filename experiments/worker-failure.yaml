@@ -1,0 +1,19 @@
+# One worker container crashes (killed) and comes back 10 s later: its devices go silent,
+# the other worker's devices are not affected.
+schema_version: 1
+name: worker-failure
+description: One of two workers killed for 10 s
+warmup: 30s
+duration: 150s
+repetitions: 3
+set:
+  run.log_level: WARNING
+  devices.publish_interval_seconds: 1
+  workers.dissolved_oxygen_probe.replicas: 0
+  workers.rumen_ph_bolus.replicas: 0
+  workers.ammonia_detector: {replicas: 2, devices_per_worker: 5}
+  monitors: {aquaculture: {replicas: 0}, poultry: {replicas: 1}, cattle: {replicas: 0}}
+actions:
+  - {at: 60s, do: kill, service: device-poultry, index: 1, for: 10s}
+report:
+  charts: [recovery, gaps, delivery]

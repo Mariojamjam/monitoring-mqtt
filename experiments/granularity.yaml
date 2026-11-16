@@ -1,0 +1,23 @@
+# The same 50 devices packed differently: one container each, or many devices per
+# container. Isolation versus overhead (memory and CPU per device).
+schema_version: 1
+name: granularity
+description: 50 devices as 50x1, 10x5, 5x10, 2x25 and 1x50 containers x devices
+warmup: 30s
+duration: 2m
+repetitions: 3
+set:
+  run.log_level: WARNING
+  devices.publish_interval_seconds: 1
+  workers.dissolved_oxygen_probe.replicas: 0
+  workers.rumen_ph_bolus.replicas: 0
+  monitors: {aquaculture: {replicas: 0}, poultry: {replicas: 1}, cattle: {replicas: 0}}
+sweep:
+  workers.ammonia_detector:
+    - {replicas: 50, devices_per_worker: 1}
+    - {replicas: 10, devices_per_worker: 5}
+    - {replicas: 5, devices_per_worker: 10}
+    - {replicas: 2, devices_per_worker: 25}
+    - {replicas: 1, devices_per_worker: 50}
+report:
+  charts: [memory_per_device, cpu, memory, latency, delivery]

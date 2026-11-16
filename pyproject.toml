@@ -48,9 +48,9 @@ markers = ["integration: needs Docker; starts an isolated stack (monitoring-mqtt
 filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]
 
 [tool.uv]
-# `uv sync` installs the dashboard too (its tests run with the unit tests); the images pick
-# their groups explicitly (Dockerfile).
-default-groups = ["dev", "dashboard"]
+# `uv sync` installs every group (the dashboard and the experiment report have unit tests);
+# the images pick their groups explicitly (Dockerfile).
+default-groups = ["dev", "dashboard", "experiments"]
 
 [dependency-groups]
 # The Streamlit dashboard; only its image installs it (Dockerfile target `dashboard`).
@@ -62,4 +62,9 @@ dashboard = [
 dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.4",
+]
+# The experiment report (charts), run on the host by `monitoring-mqtt experiment report`.
+experiments = [
+    "matplotlib>=3.11.2",
+    "pandas>=3.1.1",
 ]

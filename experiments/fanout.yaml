@@ -1,0 +1,19 @@
+# Several subscribers on the same filter: the broker sends one copy to each (fan-out).
+schema_version: 1
+name: fanout
+description: 1, 5 and 20 subscribers on the same topic filter
+warmup: 30s
+duration: 2m
+repetitions: 3
+set:
+  run.log_level: WARNING
+  devices.publish_interval_seconds: 0.5
+  workers.dissolved_oxygen_probe.replicas: 0
+  workers.rumen_ph_bolus.replicas: 0
+  workers.ammonia_detector: {replicas: 4, devices_per_worker: 5}
+  monitors.aquaculture.replicas: 0
+  monitors.cattle.replicas: 0
+sweep:
+  monitors.poultry.replicas: [1, 5, 20]
+report:
+  charts: [broker, latency, delivery, cpu, memory]

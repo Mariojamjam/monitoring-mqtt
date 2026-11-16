@@ -1,0 +1,21 @@
+# The broker restarts in the middle of the window: every client reconnects. How long until
+# every device delivers again, and what is lost (sessions live in memory only).
+schema_version: 1
+name: broker-failure
+description: Broker restart during the window, clean versus persistent sessions
+warmup: 30s
+duration: 150s
+repetitions: 3
+set:
+  run.log_level: WARNING
+  devices.publish_interval_seconds: 1
+  workers.dissolved_oxygen_probe.replicas: 0
+  workers.rumen_ph_bolus.replicas: 0
+  workers.ammonia_detector: {replicas: 2, devices_per_worker: 5}
+  monitors: {aquaculture: {replicas: 0}, poultry: {replicas: 1}, cattle: {replicas: 0}}
+sweep:
+  mqtt.clean_session: [true, false]
+actions:
+  - {at: 60s, do: restart, service: broker}
+report:
+  charts: [recovery, gaps, delivery, duplicates]

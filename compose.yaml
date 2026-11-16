@@ -354,6 +354,25 @@ services:
       MQTT_CLEAN_SESSION: "true"
       CONTROL_TIMEOUT_SECONDS: ${CONTROL_TIMEOUT_SECONDS:-5}
 
+  # Measures one experiment run (`monitoring-mqtt experiment run`): worker and monitor
+  # counters, broker statistics and, from the API, what was stored. One-off, like the TUI.
+  experiment-probe:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    command: ["python", "-m", "monitoring_mqtt.experiments.probe"]
+    environment:
+      <<: *mqtt-env
+      MQTT_CLEAN_SESSION: "true"
+      API_URL: ${REMOTE_API_URL:-http://api:8000}
+      PROBE_RUN_ID: ${PROBE_RUN_ID:-}
+      PROBE_EXPECTED_DEVICES: ${PROBE_EXPECTED_DEVICES:-1}
+      PROBE_WARMUP_SECONDS: ${PROBE_WARMUP_SECONDS:-30}
+      PROBE_DURATION_SECONDS: ${PROBE_DURATION_SECONDS:-120}
+      PROBE_OBSERVE_TELEMETRY: ${PROBE_OBSERVE_TELEMETRY:-false}
+      # Logs on stderr; stdout carries the measurements (JSON lines) for the CLI.
+      LOG_LEVEL: ${PROBE_LOG_LEVEL:-WARNING}
+
 volumes:
   # PostgreSQL data: the stored history.
   pgdata:
