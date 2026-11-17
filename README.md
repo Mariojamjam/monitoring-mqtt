@@ -11,21 +11,6 @@ topics they are interested in.
 | Poultry | Ammonia detector | `ammonia` | `ppm` |
 | Cattle | Rumen pH meter | `rumen_ph` | dimensionless |
 
-All values are **synthetic**. They are not veterinary or clinical reference values.
-
-> **Status:** v0.3.0. The three device types publish through Mosquitto. A versioned
-> experiment file sets how many worker containers and devices run per type. Independent
-> monitors receive only the domain they subscribe to, and a smoke test verifies the flow end
-> to end. Parts of the stack can run on different machines, a read-only terminal UI shows
-> who publishes and who consumes, and failures and recovery are documented with measured
-> results. Every measurement and alert is stored in PostgreSQL through a FastAPI API (the
-> only component that touches the database), and an alert engine publishes derived alerts
-> on the broker, evaluated against the simulation's ground truth. A Streamlit dashboard
-> shows the history: series against the normal band and the alert thresholds, alert
-> timelines and runs side by side, read from the API only. Versioned experiment scenarios
-> (scale, worker granularity, publish frequency, QoS, fan-out, failures) run from the CLI,
-> are measured from the outside and turn into tables and charts.
-
 ## Getting started
 
 There are two supported ways to work with the project. Both give you the same
