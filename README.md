@@ -119,13 +119,15 @@ Configuration is split by purpose:
 | [`config/examples/`](config/examples) | Ready-made experiments: anomalies, unstable devices, single-device faults | Yes |
 | `.env` (copied from [`.env.example`](.env.example)) | Settings of your machine only: which parts of the stack run here, the broker address, the host port and the smoke test timeout | No |
 
-`config/simulation.yaml` describes one experiment. The defaults shown below run one
-container per device and one monitor per domain:
+`config/simulation.yaml` describes one experiment, and every section is documented in
+the file itself. The repository's experiment runs one container per device and one
+monitor per domain, and one minute in, makes each domain's device stop, pause or delay
+for 30 s (see `behavior` below):
 
 ```yaml
 run:
   run_id: null              # null: a new id per `stack up`, shared by every worker
-  seed: 42
+  seed: 128256
   log_level: INFO
 mqtt:
   qos: 1
@@ -143,6 +145,11 @@ monitors:                   # subscribers, per kind
   poultry:     {replicas: 1}
   cattle:      {replicas: 1}
   all:         {replicas: 0}
+behavior:                   # optional; omit it for normal operation
+  faults:
+    - {device: "poultry-*-001", at: 1m, lasts: 30s, action: stop}
+    - {device: "aquaculture-*-001", at: 1m, lasts: 30s, action: pause}
+    - {device: "cattle-*-001", at: 1m, lasts: 30s, action: delay}
 ```
 
 - **Workers.** `replicas` is the number of containers (**N**), and `devices_per_worker` is

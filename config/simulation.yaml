@@ -1,65 +1,48 @@
-# Experiment configuration. Everything that defines an experiment lives here, so runs are
-# reproducible from versioned files. `monitoring-mqtt stack up` validates this file and
-# applies it; edit it and run `stack up` again (no image rebuild needed). Every `stack up`
-# starts a new run. Machine-specific settings (host port, smoke timeout) go in `.env`.
+# =========================================================================================
+# Experiment configuration
+# =========================================================================================
+# Everything that defines an experiment lives here, so every run is reproducible from a
+# versioned file. `monitoring-mqtt stack up` validates this file against the device catalog
+# (config/devices.yaml) and applies it: edit it, run `stack up` again, no image rebuild.
+# Every `stack up` starts a NEW RUN (a new run_id in every stored measurement).
 #
-# run       run_id: null generates one id per `stack up`, shared by every worker
-#           (set a value to reuse it); seed makes generated values reproducible;
-#           log_level: DEBUG | INFO | WARNING | ERROR (use WARNING for high-volume runs)
-# mqtt      qos 0 | 1 | 2; keepalive_seconds (failure detection); clean_session: false keeps
-#           subscriptions and queues QoS 1 messages for disconnected clients (the session
-#           survives `docker stop`/`start`, not container recreation); reconnect backoff
-# devices   publish_interval_seconds for every device
+# What belongs elsewhere:
+#   config/devices.yaml   what each device type IS (how values evolve, normal band)
+#   config/alerts.yaml    alert rules (thresholds, severity, hysteresis)
+#   config/examples/      ready-made experiments: stack up -c config/examples/<file>.yaml
+#   .env                  settings of THIS MACHINE only (roles, broker address, ports)
 #
-# workers   per device type (names from config/devices.yaml):
-#   replicas            N: worker containers for this type
-#   devices_per_worker  M: virtual devices inside each container (each with its own
-#                          MQTT connection and client id)
-#   Devices of a type = N x M. Default: one container per device (most realistic isolation).
-#   For scale experiments, aggregate devices, e.g.
-#     dissolved_oxygen_probe: {replicas: 5, devices_per_worker: 10}   # 50 probes
-#
-# monitors  per monitor kind, one container per replica
-#   aquaculture | poultry | cattle   subscribe to monitoring/v1/<domain>/#
-#   all                              subscribes to monitoring/v1/# (every domain)
-#   Every replica is an independent subscriber: the broker delivers its own copy of each
-#   matching message to each one (fan-out), it does not split the load between them.
-#
-# storage   the history: PostgreSQL, the API (http://127.0.0.1:8000, reference /docs) and the
-#           ingestion consumer that posts measurements and alerts to it in batches
-#   enabled         false: none of them runs
-#   batch_size      events per request to the API (1-1000)
-#   flush_interval  send a smaller batch after this long (e.g. 1s, 200ms)
-#   buffer_limit    events kept while the API is down; beyond it, the oldest are dropped
-# alerts    the alert engine: applies the rules to every measurement, publishes alerts
-#   enabled, rules  (file relative to the project, default config/alerts.yaml)
-# dashboard the Streamlit dashboard (http://127.0.0.1:8501), reading the API
-#   enabled, refresh  live refresh of its pages (0s turns it off)
-#
-# behavior  what happens to devices during the run (omit a block to turn it off).
-#   Durations need a unit: 500ms, 30s, 2m, 1h.
-#   anomalies    every: average time between anomalies of one device; lasts: duration;
-#                direction: high | low | both; only: [device types] (default: all)
-#                Values leave the operating range (config/devices.yaml) and come back.
-#   instability  every, lasts, kinds: [pause, delay, disconnect], only
-#                pause = connected but silent; delay = sent late, all at once;
-#                disconnect = measurements lost (sequence gaps)
-#   faults       exact episodes: device (id, * matches anything), at (after the worker
-#                starts), lasts (omit = until the end), action: stop | pause | delay |
-#                disconnect | anomaly (with direction: high | low)
-#   Workers announce every episode on monitoring/sim/v1/devices/{device_id}.
-#   Live commands: monitoring-mqtt device stop|pause|delay|disconnect|anomaly|resume.
-#   Ready-made experiments: config/examples/.
-#
-# Omitted entries, or replicas: 0, do not run. Omitted sections use the defaults shown below.
+# Durations need a unit: 500ms, 30s, 2m, 1h. An omitted section uses the defaults shown
+# here; an omitted worker or monitor entry, or replicas: 0, does not run.
 
 schema_version: 1
 
+# -----------------------------------------------------------------------------------------
+# run: identity and reproducibility of the run
+#   run_id      null = a new id per `stack up` (run-YYYYMMDDTHHMMSSZ), shared by every
+#               worker; set a value (or `stack up --run-id`) to name or reuse one
+#   seed        seeds the value generators and the random episodes: the same seed gives
+#               the same values and the same anomaly times
+#   log_level   DEBUG | INFO | WARNING | ERROR (devices log every publication at INFO:
+#               use WARNING for high-volume runs)
+# -----------------------------------------------------------------------------------------
 run:
   run_id: null
-  seed: 42
+  seed: 128256
   log_level: INFO
 
+# -----------------------------------------------------------------------------------------
+# mqtt: how every client of this machine talks to the broker
+#   qos                 0 = at most once; 1 = at least once (PUBACK, duplicates possible,
+#                       stored once by event_id); 2 = exactly once (two more round trips)
+#   keepalive_seconds   the broker declares a silent client dead after 1.5x this value
+#                       (detects cut cables and frozen hosts; fires the Last Will)
+#   clean_session       true = the broker forgets subscriptions on disconnect;
+#                       false = it keeps them and queues QoS 1 messages for the client
+#                       (survives `docker stop`/`start`, not container recreation).
+#                       The ingestion consumer and the alert engine always use false.
+#   reconnect           backoff between reconnection attempts: min doubles up to max
+# -----------------------------------------------------------------------------------------
 mqtt:
   qos: 1
   keepalive_seconds: 30
@@ -68,20 +51,40 @@ mqtt:
     min_delay_seconds: 1
     max_delay_seconds: 30
 
+# -----------------------------------------------------------------------------------------
+# devices: what every virtual device does
+#   publish_interval_seconds   one measurement per device every N seconds (minimum 0.1)
+# -----------------------------------------------------------------------------------------
 devices:
   publish_interval_seconds: 5
 
+# -----------------------------------------------------------------------------------------
+# workers: the PUBLISHERS, per device type (names from config/devices.yaml)
+#   replicas            N: worker containers of this type
+#   devices_per_worker  M: virtual devices inside each container, each with its own MQTT
+#                       connection and client id ({domain}-{worker_id}-{index}, e.g.
+#                       poultry-3f9a1c-001)
+#   Devices of a type = N x M. Default: one container per device (most realistic
+#   isolation). For scale, aggregate devices, e.g. {replicas: 5, devices_per_worker: 10}.
+# -----------------------------------------------------------------------------------------
 workers:
-  dissolved_oxygen_probe:
+  dissolved_oxygen_probe:    # aquaculture: monitoring/v1/aquaculture/dissolved_oxygen/...
     replicas: 1
     devices_per_worker: 1
-  ammonia_detector:
+  ammonia_detector:          # poultry: monitoring/v1/poultry/ammonia/...
     replicas: 1
     devices_per_worker: 1
-  rumen_ph_bolus:
+  rumen_ph_bolus:            # cattle: monitoring/v1/cattle/rumen_ph/...
     replicas: 1
     devices_per_worker: 1
 
+# -----------------------------------------------------------------------------------------
+# monitors: the SUBSCRIBERS, one container per replica
+#   aquaculture | poultry | cattle   subscribe to monitoring/v1/<domain>/#
+#   all                              subscribes to monitoring/v1/# (every domain)
+#   Every replica is an independent subscriber: the broker delivers its own copy of each
+#   matching message to each one (fan-out); replicas do not share the load.
+# -----------------------------------------------------------------------------------------
 monitors:
   aquaculture:
     replicas: 1
@@ -92,22 +95,76 @@ monitors:
   all:
     replicas: 0
 
+# -----------------------------------------------------------------------------------------
+# storage: the history. PostgreSQL, the API (http://127.0.0.1:8000, reference at /docs)
+# and the ingestion consumer, which posts measurements and alerts to the API in batches
+#   enabled         false = none of them runs (nothing is stored)
+#   batch_size      events per request to the API (1-1000)
+#   flush_interval  send a smaller batch after this long (adds up to this to the storage
+#                   delay, e.g. 1s, 200ms)
+#   buffer_limit    events kept in memory while the API is down; beyond it, the oldest
+#                   are dropped
+# -----------------------------------------------------------------------------------------
 storage:
   enabled: true
   batch_size: 500
   flush_interval: 1s
   buffer_limit: 50000
 
+# -----------------------------------------------------------------------------------------
+# alerts: the alert engine. Applies the rules to every measurement and publishes alerts
+# on monitoring/alerts/v1/... (stored by the ingestion consumer like any event)
+#   enabled   false = no alert engine
+#   rules     rules file, relative to the project
+# -----------------------------------------------------------------------------------------
 alerts:
   enabled: true
   rules: config/alerts.yaml
 
+# -----------------------------------------------------------------------------------------
+# dashboard: the Streamlit dashboard (http://127.0.0.1:8501), reading the API only
+#   enabled   false = no dashboard
+#   refresh   live refresh of its pages (0s turns it off)
+# -----------------------------------------------------------------------------------------
 dashboard:
   enabled: true
   refresh: 5s
 
-# Normal operation. Example:
-# behavior:
-#   anomalies: {every: 2m, lasts: 30s}
-#   faults:
-#     - {device: "poultry-*-001", at: 1m, lasts: 30s, action: stop}
+# -----------------------------------------------------------------------------------------
+# behavior: what happens to the devices during the run. Optional: omit the section, or
+# one of its blocks, to turn it off. Workers announce the start and end of every episode
+# on monitoring/sim/v1/devices/{device_id} (the ground truth the alerts are compared to).
+#
+#   Episode kinds, and what they do to the data:
+#     anomaly     values leave the normal band (towards the type's anomaly targets in
+#                 config/devices.yaml) and come back gradually; raises alerts
+#     pause       connected but silent: nothing is generated (silence, no sequence gap)
+#     delay       generated on time, held back and sent all at once when it ends
+#                 (late burst, high latency, nothing lost)
+#     disconnect  disconnected, still generating: what it generates is lost (sequence gaps)
+#     stop        switched off: disconnected and generates nothing (silence, no gap)
+#
+#   anomalies     random anomalies on every device
+#                   every: average time between two anomalies of one device
+#                   lasts: duration; direction: high | low | both; only: [device types]
+#                   e.g. anomalies: {every: 1m, lasts: 40s, direction: both}
+#   instability   random availability episodes on every device
+#                   every, lasts, kinds: [pause, delay, disconnect], only
+#                   e.g. instability: {every: 2m, lasts: 20s}
+#   faults        exact episodes, once per run
+#                   device: device id, `*` matches any part (the worker id changes with
+#                           every container, so use "poultry-*-001")
+#                   at:     when it starts, counted from the worker's start
+#                   lasts:  duration (omit = until the end of the run)
+#                   action: anomaly | pause | delay | disconnect | stop
+#                   direction: high | low (anomaly only, if the type has it)
+#
+#   Live, by hand: monitoring-mqtt device anomaly|pause|delay|disconnect|stop|resume <id>
+# -----------------------------------------------------------------------------------------
+behavior:
+  faults:
+    # One minute in, each domain loses its device for 30 s in a different way: watch the
+    # three kinds of silence side by side in the TUI.
+    - {device: "poultry-*-001", at: 1m, lasts: 30s, action: stop}       # off: silence, no gap
+    - {device: "aquaculture-*-001", at: 1m, lasts: 30s, action: pause}  # connected, mute
+    - {device: "cattle-*-001", at: 1m, lasts: 30s, action: delay}       # late burst at 1m30s
