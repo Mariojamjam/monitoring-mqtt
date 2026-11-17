@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 from monitoring_mqtt import __version__
 from monitoring_mqtt.api import docs
 from monitoring_mqtt.api.routes import alerts, devices, health, ingest, measurements, runs
+from monitoring_mqtt.api.routes import catalog as catalog_routes
+from monitoring_mqtt.api.schemas import Catalog
 from monitoring_mqtt.storage.queries import InvalidCursorError
 from monitoring_mqtt.storage.settings import DatabaseSettings
 from monitoring_mqtt.storage.store import StorageUnavailableError, Store
@@ -42,11 +44,13 @@ TAGS = [
     {"name": "measurements", "description": "Stored measurements and time series"},
     {"name": "alerts", "description": "Alerts raised by the alert engine"},
     {"name": "runs", "description": "Runs (one per `stack up`) and statistics"},
+    {"name": "catalog", "description": "Device types and alert rules, for charts"},
 ]
 
 
-def create_app(store: object | None = None) -> FastAPI:
-    """Build the app; ``store`` replaces the database (tests, OpenAPI export)."""
+def create_app(store: object | None = None, catalog: Catalog | None = None) -> FastAPI:
+    """Build the app; ``store`` replaces the database and ``catalog`` the configuration
+    files (tests, OpenAPI export)."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -69,6 +73,8 @@ def create_app(store: object | None = None) -> FastAPI:
     )
     if store is not None:
         app.state.store = store
+    app.state.catalog = catalog
+    app.state.load_catalog = catalog_routes.load_configured_catalog
 
     @app.exception_handler(StorageUnavailableError)
     async def storage_unavailable(request: Request, exc: StorageUnavailableError) -> JSONResponse:
@@ -85,7 +91,7 @@ def create_app(store: object | None = None) -> FastAPI:
     # Health stays at the root (container healthchecks); the API contract is under /api.
     app.include_router(health.router)
     for router in (ingest.router, devices.router, measurements.router, alerts.router,
-                   runs.router):  # fmt: skip
+                   runs.router, catalog_routes.router):  # fmt: skip
         app.include_router(router, prefix=API_PREFIX)
     docs.install(app)
     return app

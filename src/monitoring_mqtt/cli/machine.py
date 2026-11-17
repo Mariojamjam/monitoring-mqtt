@@ -5,8 +5,8 @@ These are deployment settings, not experiment parameters, so they live in the us
 Docker Compose:
 
 - ``STACK_ROLES``: comma-separated subset of ``broker``, ``devices``, ``monitors``,
-  ``storage`` (PostgreSQL, API and ingestion consumer) and ``alerts`` (alert engine)
-  (default: all of them, the single-machine setup);
+  ``storage`` (PostgreSQL, API and ingestion consumer), ``alerts`` (alert engine) and
+  ``dashboard`` (default: all of them, the single-machine setup);
 - ``MQTT_BROKER_HOST`` / ``MQTT_BROKER_PORT``: a broker running elsewhere (another
   machine, a tunnel endpoint, ``host.docker.internal``). Empty means the stack's own broker.
   A loopback address (``127.0.0.1``, ``localhost``) means a tunnel listening on this
@@ -16,6 +16,9 @@ Docker Compose:
   (default ``127.0.0.1:1883``; ``0.0.0.0`` exposes it to the network);
 - ``API_BIND_ADDRESS`` / ``API_HOST_PORT``: where this machine publishes the API
   (default ``127.0.0.1:8000``);
+- ``DASHBOARD_BIND_ADDRESS`` / ``DASHBOARD_HOST_PORT``: where this machine publishes the
+  dashboard (default ``127.0.0.1:8501``); ``DASHBOARD_API_URL``: the API it reads, when
+  this machine does not run the storage role (default: this stack's API);
 - ``NODE_NAME``: label of this machine in worker claims and monitor status (default: the
   hostname where the CLI runs).
 """
@@ -34,9 +37,11 @@ from monitoring_mqtt.core.status import NODE_NAME_MAX_LENGTH
 
 ENV_FILE = ".env"
 BROKER, DEVICES, MONITORS = "broker", "devices", "monitors"
-STORAGE, ALERTS = "storage", "alerts"
-ROLES = (BROKER, DEVICES, MONITORS, STORAGE, ALERTS)
+STORAGE, ALERTS, DASHBOARD = "storage", "alerts", "dashboard"
+ROLES = (BROKER, DEVICES, MONITORS, STORAGE, ALERTS, DASHBOARD)
 API_PORT = 8000
+DASHBOARD_PORT = 8501
+LOCAL_API_URL = "http://api:8000"  # Compose service name, inside the stack network
 LOCAL_BROKER_HOST = "broker"  # Compose service name, reachable inside the stack network
 BROKER_PORT = 1883  # port inside the stack network (contract)
 DEFAULT_BIND_ADDRESS = "127.0.0.1"
@@ -89,14 +94,19 @@ class Machine:
     node: str = "unknown"
     api_bind_address: str = DEFAULT_BIND_ADDRESS
     api_host_port: int = API_PORT
+    dashboard_bind_address: str = DEFAULT_BIND_ADDRESS
+    dashboard_host_port: int = DASHBOARD_PORT
+    dashboard_api_url: str | None = None  # None: this stack's API
 
     @property
     def api_url(self) -> str:
         """The API as seen from this machine (the CLI, a browser, curl)."""
-        host = "127.0.0.1" if self.api_bind_address in ("0.0.0.0", "::") else self.api_bind_address
-        if ":" in host:
-            host = f"[{host}]"
-        return f"http://{host}:{self.api_host_port}"
+        return _local_url(self.api_bind_address, self.api_host_port)
+
+    @property
+    def dashboard_url(self) -> str:
+        """The dashboard as seen from this machine (a browser)."""
+        return _local_url(self.dashboard_bind_address, self.dashboard_host_port)
 
     def runs(self, role: str) -> bool:
         return role in self.roles
@@ -170,7 +180,17 @@ class Machine:
             "NODE_NAME": self.node,
             "API_BIND_ADDRESS": self.api_bind_address,
             "API_HOST_PORT": str(self.api_host_port),
+            "DASHBOARD_BIND_ADDRESS": self.dashboard_bind_address,
+            "DASHBOARD_HOST_PORT": str(self.dashboard_host_port),
+            "DASHBOARD_API_URL": self.dashboard_api_url or LOCAL_API_URL,
         }
+
+
+def _local_url(bind_address: str, port: int) -> str:
+    host = "127.0.0.1" if bind_address in ("0.0.0.0", "::") else bind_address
+    if ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{port}"
 
 
 def _port(env: Mapping[str, str], name: str, default: int) -> int:
@@ -219,6 +239,18 @@ def _bind_address(raw: str, name: str = "MQTT_BIND_ADDRESS") -> str:
     return address
 
 
+def _api_url(raw: str, roles: frozenset[str]) -> str | None:
+    url = raw.strip().rstrip("/")
+    if url and not re.match(r"^https?://[^\s/]+(/\S*)?$", url):
+        raise MachineError(f"DASHBOARD_API_URL={url!r} is not an http(s) URL")
+    if not url and DASHBOARD in roles and STORAGE not in roles:
+        raise MachineError(
+            "STACK_ROLES includes 'dashboard' but not 'storage', so set DASHBOARD_API_URL to "
+            "the API the dashboard should read (e.g. http://192.168.0.10:8000)"
+        )
+    return url or None
+
+
 def _node(raw: str) -> str:
     value = raw.strip() or socket.gethostname()
     if len(value) > NODE_NAME_MAX_LENGTH:
@@ -250,6 +282,11 @@ def machine_from_env(env: Mapping[str, str]) -> Machine:
         node=_node(env.get("NODE_NAME", "")),
         api_bind_address=_bind_address(env.get("API_BIND_ADDRESS", ""), "API_BIND_ADDRESS"),
         api_host_port=_port(env, "API_HOST_PORT", API_PORT),
+        dashboard_bind_address=_bind_address(
+            env.get("DASHBOARD_BIND_ADDRESS", ""), "DASHBOARD_BIND_ADDRESS"
+        ),
+        dashboard_host_port=_port(env, "DASHBOARD_HOST_PORT", DASHBOARD_PORT),
+        dashboard_api_url=_api_url(env.get("DASHBOARD_API_URL", ""), roles),
     )
 
 

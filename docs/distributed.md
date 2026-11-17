@@ -21,12 +21,14 @@ Each machine describes its part in its own `.env` (git-ignored, copied from
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `STACK_ROLES` | all roles | Parts of the stack that run on this machine: `broker`, `devices`, `monitors`, `storage` (PostgreSQL, API, ingestion consumer), `alerts` (alert engine) |
+| `STACK_ROLES` | all roles | Parts of the stack that run on this machine: `broker`, `devices`, `monitors`, `storage` (PostgreSQL, API, ingestion consumer), `alerts` (alert engine), `dashboard` (Streamlit) |
 | `MQTT_BROKER_HOST` | empty | Broker to use when this machine has no `broker` role: IP address, hostname, `127.0.0.1` for a tunnel on this machine, or `host.docker.internal` |
 | `MQTT_BROKER_PORT` | `1883` | Port of that broker (only with `MQTT_BROKER_HOST`) |
 | `MQTT_BIND_ADDRESS` | `127.0.0.1` | Address the local broker is published on; `0.0.0.0` accepts other machines |
 | `MQTT_HOST_PORT` | `1883` | Port the local broker is published on |
 | `API_BIND_ADDRESS` / `API_HOST_PORT` | `127.0.0.1` / `8000` | Where the API is published (`storage` role) |
+| `DASHBOARD_BIND_ADDRESS` / `DASHBOARD_HOST_PORT` | `127.0.0.1` / `8501` | Where the dashboard is published (`dashboard` role) |
+| `DASHBOARD_API_URL` | this stack's API | The API the dashboard reads; required when this machine runs `dashboard` without `storage` |
 | `NODE_NAME` | hostname where the CLI runs | Label of this machine in worker claims and monitor status. Set it in a Dev Container, whose hostname is not the machine's |
 
 The CLI checks the combination before calling Docker. A machine either runs the broker
@@ -62,14 +64,25 @@ MQTT_BROKER_HOST=192.168.0.50
 **History and alerts** on a computer with more memory than the Pi:
 
 ```dotenv
-STACK_ROLES=storage,alerts
+STACK_ROLES=storage,alerts,dashboard
 MQTT_BROKER_HOST=192.168.0.50
 ```
 
 The ingestion consumer and the alert engine connect to the Pi's broker like any other
-client; PostgreSQL and the API stay on this computer. Run `storage` and `alerts` on one
-machine each: they use fixed client ids, so a second copy on another machine would take
-over the first one's session.
+client; PostgreSQL, the API and the dashboard stay on this computer. Run `storage` and
+`alerts` on one machine each: they use fixed client ids, so a second copy on another
+machine would take over the first one's session.
+
+**Dashboard on a laptop**, reading the API of the history computer (for example
+`192.168.0.60`, with `API_BIND_ADDRESS=0.0.0.0` there):
+
+```dotenv
+STACK_ROLES=dashboard
+MQTT_BROKER_HOST=192.168.0.50
+DASHBOARD_API_URL=http://192.168.0.60:8000
+```
+
+The dashboard never speaks MQTT; it needs only the API. Any number of dashboards may run.
 
 Start the broker first, then the other machines:
 

@@ -33,6 +33,8 @@
 #   buffer_limit    events kept while the API is down; beyond it, the oldest are dropped
 # alerts    the alert engine: applies the rules to every measurement, publishes alerts
 #   enabled, rules  (file relative to the project, default config/alerts.yaml)
+# dashboard the Streamlit dashboard (http://127.0.0.1:8501), reading the API
+#   enabled, refresh  live refresh of its pages (0s turns it off)
 #
 # behavior  what happens to devices during the run (omit a block to turn it off).
 #   Durations need a unit: 500ms, 30s, 2m, 1h.
@@ -99,6 +101,10 @@ storage:
 alerts:
   enabled: true
   rules: config/alerts.yaml
+
+dashboard:
+  enabled: true
+  refresh: 5s
 
 # Normal operation. Example:
 # behavior:

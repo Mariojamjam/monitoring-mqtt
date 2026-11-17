@@ -498,20 +498,63 @@
         "tags": [
           "measurements"
         ],
-        "summary": "Aggregated time series of one device",
-        "description": "Average, minimum, maximum and count per bucket, oldest first (at most 2000\nbuckets: the most recent ones). Ready for charts.",
+        "summary": "Aggregated time series",
+        "description": "Average, minimum, maximum and count per bucket, oldest first (at most 2000\nbuckets: the most recent ones). Over one device (`device_id`) or all the devices of a\ndomain (`domain`): set exactly one. Ready for charts.",
         "operationId": "series_api_measurements_series_get",
         "parameters": [
           {
             "name": "device_id",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
-              "description": "The device",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One device",
               "title": "Device Id"
             },
-            "description": "The device"
+            "description": "One device"
+          },
+          {
+            "name": "domain",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Every device of a domain",
+              "title": "Domain"
+            },
+            "description": "Every device of a domain"
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this run",
+              "title": "Run Id"
+            },
+            "description": "Only this run"
           },
           {
             "name": "bucket",
@@ -980,6 +1023,28 @@
           }
         }
       }
+    },
+    "/api/catalog": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Device types and alert rules",
+        "description": "Every device type with its value bounds, normal band and anomaly targets, and the\nalert rules of the current experiment. Dashboards draw them on the charts. Static: it\ndoes not need the database.",
+        "operationId": "catalog_api_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Catalog"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1163,6 +1228,100 @@
         ],
         "title": "Alert"
       },
+      "AlertRuleInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "device_type": {
+            "type": "string",
+            "title": "Device Type"
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity"
+          },
+          "condition": {
+            "type": "string",
+            "title": "Condition",
+            "description": "`above` or `below` the threshold"
+          },
+          "threshold": {
+            "type": "number",
+            "title": "Threshold"
+          },
+          "clear_at": {
+            "type": "number",
+            "title": "Clear At",
+            "description": "The alert clears back past this value (hysteresis)"
+          },
+          "after": {
+            "type": "integer",
+            "title": "After",
+            "description": "Violations in a row that raise the alert"
+          },
+          "clear_after": {
+            "type": "integer",
+            "title": "Clear After",
+            "description": "Values back past `clear_at` that clear it"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "device_type",
+          "severity",
+          "condition",
+          "threshold",
+          "clear_at",
+          "after",
+          "clear_after"
+        ],
+        "title": "AlertRuleInfo"
+      },
+      "Band": {
+        "properties": {
+          "minimum": {
+            "type": "number",
+            "title": "Minimum"
+          },
+          "maximum": {
+            "type": "number",
+            "title": "Maximum"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minimum",
+          "maximum"
+        ],
+        "title": "Band"
+      },
+      "Catalog": {
+        "properties": {
+          "device_types": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceTypeInfo"
+            },
+            "type": "array",
+            "title": "Device Types"
+          },
+          "alert_rules": {
+            "items": {
+              "$ref": "#/components/schemas/AlertRuleInfo"
+            },
+            "type": "array",
+            "title": "Alert Rules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_types",
+          "alert_rules"
+        ],
+        "title": "Catalog"
+      },
       "Device": {
         "properties": {
           "device_id": {
@@ -1336,6 +1495,84 @@
           "measurements"
         ],
         "title": "DeviceDetail"
+      },
+      "DeviceTypeInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
+          "metric": {
+            "type": "string",
+            "title": "Metric"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "bounds": {
+            "$ref": "#/components/schemas/Band",
+            "description": "Values the device can produce"
+          },
+          "normal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Band"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Synthetic normal band (operating range)"
+          },
+          "anomaly_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anomaly Low",
+            "description": "Where a low anomaly drives the value"
+          },
+          "anomaly_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anomaly High",
+            "description": "Where a high anomaly drives the value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "domain",
+          "metric",
+          "unit",
+          "bounds",
+          "normal",
+          "anomaly_low",
+          "anomaly_high"
+        ],
+        "title": "DeviceTypeInfo"
       },
       "DomainCount": {
         "properties": {
@@ -1728,6 +1965,81 @@
             },
             "type": "array",
             "title": "Domains"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "title": "Duration Seconds",
+            "description": "From the first to the last measurement"
+          },
+          "measurements_per_second": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measurements Per Second"
+          },
+          "generated_to_received_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated To Received Ms",
+            "description": "Average: device → ingestion consumer (the MQTT path)"
+          },
+          "generated_to_stored_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated To Stored Ms",
+            "description": "Average: device → database"
+          },
+          "generated_to_stored_p95_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated To Stored P95 Ms",
+            "description": "95th percentile of the same"
+          },
+          "generated_to_stored_max_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated To Stored Max Ms"
+          },
+          "sequence_gaps": {
+            "type": "integer",
+            "title": "Sequence Gaps",
+            "description": "Measurements missing between each device's lowest and highest stored sequence, summed over the devices"
+          },
+          "alerts_by_severity": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Alerts By Severity"
           }
         },
         "type": "object",
@@ -1738,15 +2050,41 @@
           "measurements",
           "devices",
           "alerts",
-          "domains"
+          "domains",
+          "duration_seconds",
+          "measurements_per_second",
+          "generated_to_received_ms",
+          "generated_to_stored_ms",
+          "generated_to_stored_p95_ms",
+          "generated_to_stored_max_ms",
+          "sequence_gaps",
+          "alerts_by_severity"
         ],
         "title": "RunDetail"
       },
       "Series": {
         "properties": {
           "device_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Device Id"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
           },
           "bucket_seconds": {
             "type": "number",
@@ -1763,6 +2101,7 @@
         "type": "object",
         "required": [
           "device_id",
+          "domain",
           "bucket_seconds",
           "points"
         ],
@@ -2073,6 +2412,10 @@
     {
       "name": "runs",
       "description": "Runs (one per `stack up`) and statistics"
+    },
+    {
+      "name": "catalog",
+      "description": "Device types and alert rules, for charts"
     }
   ]
 }

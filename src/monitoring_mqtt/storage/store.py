@@ -76,8 +76,8 @@ class Store:
     def list_measurements(self, **filters) -> queries.Page:
         return self._read(lambda c: queries.list_measurements(c, **filters))
 
-    def series(self, device_id: str, bucket_seconds: float, **filters):
-        return self._read(lambda c: queries.series(c, device_id, bucket_seconds, **filters))
+    def series(self, bucket_seconds: float, **filters):
+        return self._read(lambda c: queries.series(c, bucket_seconds, **filters))
 
     def list_alerts(self, **filters) -> queries.Page:
         return self._read(lambda c: queries.list_alerts(c, **filters))

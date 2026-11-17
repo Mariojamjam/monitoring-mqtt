@@ -13,10 +13,10 @@ from monitoring_mqtt.consumers.delivery import (
     RetryLaterError,
 )
 from monitoring_mqtt.consumers.ingestion import Ingestion, IngestionSettings
-from monitoring_mqtt.consumers.rules import Rule, RulesFile
 from monitoring_mqtt.core.alerts import AlertEvent
 from monitoring_mqtt.core.config import MqttSettings
 from monitoring_mqtt.core.ingest import IngestBatch, IngestResult
+from monitoring_mqtt.core.rules import Rule, RulesFile
 from monitoring_mqtt.core.status import MonitorState
 
 

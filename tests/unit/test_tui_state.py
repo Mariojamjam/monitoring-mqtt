@@ -253,8 +253,9 @@ def test_no_band_means_unknown_range(state: SystemState) -> None:
 
 
 def alert_message(state: str, at: float, active: bool = False) -> Message:
-    from monitoring_mqtt.consumers.rules import AlertEvaluator, Rule
+    from monitoring_mqtt.consumers.rules import AlertEvaluator
     from monitoring_mqtt.core.alerts import AlertState
+    from monitoring_mqtt.core.rules import Rule
 
     evaluator = AlertEvaluator([Rule(id="ammonia-high", device_type="poultry_type", above=25)])
     m = Measurement.from_payload(telemetry("poultry-fc5336-001", 1, E0, value=30).payload)

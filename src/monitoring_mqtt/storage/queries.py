@@ -148,14 +148,19 @@ def list_measurements(
 
 def series(
     conn: Connection,
-    device_id: str,
     bucket_seconds: float,
     *,
+    device_id: str | None = None,
+    domain: str | None = None,
+    run_id: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int = 1000,
 ) -> list[dict[str, Any]]:
-    """Average, minimum, maximum and count per time bucket, oldest first."""
+    """Average, minimum, maximum and count per time bucket, oldest first.
+
+    Over one device or every device of a domain (the filters combine with AND).
+    """
     m = measurements.c
     bucket = func.date_bin(
         literal(f"{bucket_seconds} seconds").cast(INTERVAL()),
@@ -170,11 +175,13 @@ def series(
             func.min(m.value).label("min"),
             func.max(m.value).label("max"),
         )
-        .where(m.device_id == device_id)
         .group_by(bucket)
         .order_by(bucket.desc())
         .limit(limit)
     )
+    for column, value in ((m.device_id, device_id), (m.domain, domain), (m.run_id, run_id)):
+        if value:
+            query = query.where(column == value)
     if since:
         query = query.where(m.generated_at >= since)
     if until:
@@ -273,7 +280,12 @@ def list_runs(conn: Connection, *, limit: int = 100) -> list[dict[str, Any]]:
     return [{**r, **counts.get(r["run_id"], empty)} for r in items]
 
 
+def _ms(seconds: Any) -> float | None:
+    return None if seconds is None else round(float(seconds) * 1000, 1)
+
+
 def get_run(conn: Connection, run_id: str) -> dict[str, Any] | None:
+    """The run with what was stored for it and how the system behaved during it."""
     row = conn.execute(select(runs).where(runs.c.run_id == run_id)).first()
     if row is None:
         return None
@@ -290,6 +302,50 @@ def get_run(conn: Connection, run_id: str) -> dict[str, Any] | None:
             .order_by(m.domain)
         )
     )  # fmt: skip
+    duration = (run["last_seen_at"] - run["first_seen_at"]).total_seconds()
+    run["duration_seconds"] = round(duration, 3)
+    run["measurements_per_second"] = round(run["measurements"] / duration, 3) if duration else None
+
+    to_broker = func.extract("epoch", m.received_at - m.generated_at)
+    to_database = func.extract("epoch", m.stored_at - m.generated_at)
+    delays = conn.execute(
+        select(
+            func.avg(to_broker),
+            func.avg(to_database),
+            func.percentile_cont(0.95).within_group(to_database),
+            func.max(to_database),
+        ).where(m.run_id == run_id)
+    ).one()
+    run["generated_to_received_ms"] = _ms(delays[0])
+    run["generated_to_stored_ms"] = _ms(delays[1])
+    run["generated_to_stored_p95_ms"] = _ms(delays[2])
+    run["generated_to_stored_max_ms"] = _ms(delays[3])
+
+    # Missing sequence numbers per device: between its lowest and highest stored sequence.
+    # A device restarted within the run starts again at 1, so its gaps may be undercounted.
+    per_device = (
+        select(
+            (func.max(m.sequence) - func.min(m.sequence) + 1
+             - func.count(m.sequence.distinct())).label("missing")
+        )
+        .where(m.run_id == run_id)
+        .group_by(m.device_id)
+        .subquery()
+    )  # fmt: skip
+    missing = conn.execute(
+        select(func.coalesce(func.sum(func.greatest(per_device.c.missing, 0)), 0))
+    ).scalar_one()
+    run["sequence_gaps"] = int(missing)
+
+    a = alerts.c
+    run["alerts_by_severity"] = {
+        r.severity: r.n
+        for r in conn.execute(
+            select(a.severity, func.count().label("n"))
+            .where(a.run_id == run_id)
+            .group_by(a.severity)
+        )
+    }
     return run
 
 

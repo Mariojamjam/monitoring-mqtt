@@ -48,8 +48,26 @@ def test_defaults_are_the_single_machine_stack() -> None:
         "RELAY_PORT": "1883",
         "API_BIND_ADDRESS": "127.0.0.1",
         "API_HOST_PORT": "8000",
+        "DASHBOARD_BIND_ADDRESS": "127.0.0.1",
+        "DASHBOARD_HOST_PORT": "8501",
+        "DASHBOARD_API_URL": "http://api:8000",
     }
     assert machine.api_url == "http://127.0.0.1:8000"
+    assert machine.dashboard_url == "http://127.0.0.1:8501"
+
+
+def test_dashboard_on_its_own_machine_reads_a_remote_api() -> None:
+    remote = {"STACK_ROLES": "dashboard", "MQTT_BROKER_HOST": "pi.local"}
+    with pytest.raises(MachineError, match="DASHBOARD_API_URL"):
+        machine_from_env(remote)
+    machine = machine_from_env({**remote, "DASHBOARD_API_URL": "http://10.0.0.5:8000/",
+                                "DASHBOARD_BIND_ADDRESS": "0.0.0.0"})  # fmt: skip
+    env = machine.compose_env()
+    assert env["DASHBOARD_API_URL"] == "http://10.0.0.5:8000"
+    assert env["DASHBOARD_BIND_ADDRESS"] == "0.0.0.0"
+    assert machine.dashboard_url == "http://127.0.0.1:8501"
+    with pytest.raises(MachineError, match="not an http"):
+        machine_from_env({**remote, "DASHBOARD_API_URL": "api:8000"})
 
 
 def test_broker_only_machine_exposed_to_the_network() -> None:

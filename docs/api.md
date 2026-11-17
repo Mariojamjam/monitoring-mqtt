@@ -28,11 +28,12 @@ uv run python -m monitoring_mqtt.api.docs > docs/openapi.json
 | `GET /api/devices` | Devices with their latest value and open alert count; filters `domain`, `device_type`, `run_id` |
 | `GET /api/devices/{device_id}` | One device, how many measurements are stored, its open alerts |
 | `GET /api/measurements` | Measurements, newest first; filters `device_id`, `domain`, `metric`, `run_id`, `from`, `to` |
-| `GET /api/measurements/series` | Average, minimum, maximum and count per time bucket for one device (`bucket=10s`, `1m`, `1h`…) |
+| `GET /api/measurements/series` | Average, minimum, maximum and count per time bucket (`bucket=10s`, `1m`, `1h`…) for one device (`device_id`) or every device of a domain (`domain`); also `run_id`, `from`, `to` |
 | `GET /api/alerts` | Alerts, newest first; filters `state` (`active`, `cleared`), `severity`, `domain`, `device_id`, `rule_id`, `run_id`, `from`, `to` |
 | `GET /api/alerts/{alert_id}` | One alert, with its duration once cleared |
-| `GET /api/runs`, `GET /api/runs/{run_id}` | Runs (one per `stack up`) with measurement, device and alert counts, per domain |
+| `GET /api/runs`, `GET /api/runs/{run_id}` | Runs (one per `stack up`) with measurement, device and alert counts, per domain. One run also has its duration, measurements per second, delays from the device to the ingestion consumer and to the database (average, p95, maximum), missing measurements (sequence gaps) and alerts per severity |
 | `GET /api/stats` | Totals, open alerts, and the average delay to the database |
+| `GET /api/catalog` | Device types (value bounds, normal band, anomaly targets) and the alert rules of the current experiment; static, no database. The dashboard draws them on its charts |
 
 ## Examples
 
@@ -42,6 +43,8 @@ curl -s $API/api/stats
 curl -s "$API/api/devices?domain=poultry"
 curl -s "$API/api/measurements?device_id=poultry-3f9a1c-001&from=2026-11-13T12:00:00Z&limit=50"
 curl -s "$API/api/measurements/series?device_id=poultry-3f9a1c-001&bucket=1m"
+curl -s "$API/api/measurements/series?domain=cattle&bucket=10s&run_id=lab-01"
+curl -s "$API/api/catalog"
 curl -s "$API/api/alerts?state=active"
 curl -s "$API/api/runs/run-20261113T120000Z"
 ```
@@ -88,5 +91,5 @@ its own:
 | 400 | Invalid `cursor` |
 | 404 | Unknown device, alert or run |
 | 413 | More than 1000 items in one batch |
-| 422 | Invalid parameter or body (e.g. `limit=0`, `bucket=30` without a unit, `state=open`) |
+| 422 | Invalid parameter or body (e.g. `limit=0`, `bucket=30` without a unit, `state=open`, a series with both or neither of `device_id` and `domain`) |
 | 503 | The database is unavailable; retry after `Retry-After` seconds |

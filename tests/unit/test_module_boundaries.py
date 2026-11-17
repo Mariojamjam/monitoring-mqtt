@@ -11,12 +11,13 @@ PACKAGE = Path(__file__).resolve().parents[2] / "src" / "monitoring_mqtt"
 ALLOWED = {
     "core": set(),
     "storage": {"core"},
-    "api": {"core", "storage"},
+    "api": {"core", "storage", "simulator"},  # the catalog route reads the device catalog
     "simulator": {"core"},
     "consumers": {"core"},
     "tools": {"core", "simulator"},  # control tool reads the device catalog
     "tui": {"core", "simulator"},  # the UI reads the device catalog (normal bands)
     "testing": {"core"},
+    "dashboard": {"core"},  # reads the API over HTTP: never storage, MQTT consumers or api
 }
 
 

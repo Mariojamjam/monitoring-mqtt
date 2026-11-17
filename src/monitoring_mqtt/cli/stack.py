@@ -17,6 +17,7 @@ from monitoring_mqtt.cli.dockerhost import DockerHost, DockerHostError, inspect_
 from monitoring_mqtt.cli.machine import (
     ALERTS,
     BROKER,
+    DASHBOARD,
     DEVICES,
     MONITORS,
     STORAGE,
@@ -40,6 +41,7 @@ from monitoring_mqtt.core.registry import WorkerClaim
 BROKER_SERVICE = "broker"
 STORAGE_SERVICES = ("postgres", "api", "ingestion")  # long-running (migrate exits)
 ALERTS_SERVICE = "alerts"
+DASHBOARD_SERVICE = "dashboard"
 RELAY_SERVICE = "broker-relay"
 WORKERS_SERVICE = "workers"
 
@@ -80,6 +82,7 @@ def for_machine(sim: Simulation, machine: Machine) -> Simulation:
         monitors=machine.runs(MONITORS),
         storage=machine.runs(STORAGE),
         alerts=machine.runs(ALERTS),
+        dashboard=machine.runs(DASHBOARD),
     )
     return replace(sim, plan=plan)
 
@@ -152,6 +155,7 @@ def verify_stack(plan: StackPlan, running: dict[str, list[str]]) -> list[str]:
     # Ingestion and alerts use fixed client ids (persistent sessions): exactly one each.
     expected.update({s: int(plan.storage) for s in STORAGE_SERVICES})
     expected[ALERTS_SERVICE] = int(plan.alerts)
+    expected[DASHBOARD_SERVICE] = int(plan.dashboard)
     return [
         *_check_counts(expected, running),
         # Device and monitor client ids embed the container's short id; check each group.
@@ -330,6 +334,13 @@ def print_experiment(
         table.add_row("alerts", f"on: {len(sim.rules.rules)} rules from {sim.alerts.rules}")
     else:
         table.add_row("alerts", "off" + _off_reason(sim.alerts.enabled, machine, ALERTS))
+    if sim.plan.dashboard:
+        refresh = sim.dashboard.refresh
+        live = f"live every {human_duration(refresh)}" if refresh else "live refresh off"
+        api = machine.dashboard_api_url or "this stack's API"
+        table.add_row("dashboard", f"on: {machine.dashboard_url} ({live}; reads {api})")
+    else:
+        table.add_row("dashboard", "off" + _off_reason(sim.dashboard.enabled, machine, DASHBOARD))
     for fault in sim.behavior.faults:
         lasts = f" for {human_duration(fault.lasts)}" if fault.lasts else " until the end"
         table.add_row(
@@ -412,7 +423,7 @@ def up(
         raise typer.Exit(code=code)
 
     services = [w.service for w in plan.workers] + [m.service for m in plan.monitors]
-    services += [*STORAGE_SERVICES, ALERTS_SERVICE]
+    services += [*STORAGE_SERVICES, ALERTS_SERVICE, DASHBOARD_SERVICE]
     running = running_containers(root, [*services, RELAY_SERVICE])
     print_experiment(sim, machine, effective_run_id, generated, relay)
     print_topology(sim, machine, running)

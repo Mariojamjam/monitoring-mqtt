@@ -16,7 +16,7 @@ job.
 
 ## 2. Communication map
 
-Solid arrows are implemented; dashed arrows are planned.
+Every arrow is implemented.
 
 ```mermaid
 flowchart LR
@@ -54,7 +54,7 @@ flowchart LR
   BROKER -- "MQTT deliver<br/>alert events" --> PER
   PER -- "HTTP POST JSON<br/>batches of events" --> API
   API -- "SQL INSERT idempotent<br/>SQL SELECT" --> DB
-  ST -. "HTTP GET JSON<br/>polling" .-> API
+  ST -- "HTTP GET JSON<br/>polling" --> API
 
   CLI -- "docker compose<br/>argv, env" --> DOCKER
   CLI -- "MQTT PUBLISH<br/>device command (via control service)" --> BROKER
@@ -90,7 +90,7 @@ without the CLI.
 | Broker | Alert engine | MQTT delivery, persistent session | Telemetry to check against rules | implemented |
 | Alert engine | Broker | MQTT PUBLISH | `monitoring/alerts/v1/events/{domain}/{severity}/{device_id}`: derived event that references the measurement; `…/active/{device_id}/{rule_id}` retained | implemented |
 | FastAPI | PostgreSQL | SQL (read) | Devices, measurements, series, alerts, runs | implemented |
-| Streamlit | FastAPI | HTTP GET, JSON | Query results for charts and tables | planned |
+| Streamlit | FastAPI | HTTP GET, JSON | Query results for charts and tables (`/api/...`, including the catalog of device types and alert rules) | implemented |
 | CLI | Docker Compose | Process call | Service list, replicas and experiment variables | implemented |
 
 ## 4. Components
@@ -106,7 +106,7 @@ without the CLI.
 | Alert engine | `alerts` | `consumers.alerts` | Applies threshold rules and publishes alert events | implemented |
 | Database | `postgres` | PostgreSQL + SQLAlchemy/Alembic | Durable history, owned by the API | implemented |
 | API | `api` | `api` (FastAPI) | Single entry point to the database: receives events to store and answers queries | implemented |
-| Dashboard | `dashboard` | `dashboard` (Streamlit) | Historical charts and experiment comparison | planned |
+| Dashboard | `dashboard` | `dashboard` (Streamlit) | Historical charts, alerts and run comparison, read from the API | implemented |
 | CLI | host or Dev Container | `cli` | Applies the experiment and machine settings to Compose | implemented |
 | Relay | `broker-relay` (optional) | `tools.relay` | Lets containers reach a broker tunnel on the host's loopback | implemented |
 
@@ -150,7 +150,7 @@ independently.
   holds them in a bounded buffer, retrying with backoff. If the buffer fills up, the
   oldest events are dropped and counted; sequence gaps in the stored data show it.
 
-### Streamlit: how the dashboard gets its data (planned)
+### Streamlit: how the dashboard gets its data
 
 > **What Streamlit is.** A Python library that turns a script into a web dashboard
 > (charts, tables, filters) without HTML or JavaScript. It runs as a small web server
@@ -159,7 +159,10 @@ independently.
 
 - The dashboard **pulls** data from the API over HTTP. Charts refresh on a timer
   (`st.fragment(run_every=…)`), and responses are cached for a few seconds
-  (`st.cache_data(ttl=…)`) so that many viewers do not overload the API.
+  (`st.cache_data(ttl=…)`) so that many viewers do not overload the API
+  ([dashboard.md](dashboard.md)).
+- What it draws besides the data (normal bands, alert thresholds) also comes from the
+  API (`GET /api/catalog`), so it reads no configuration file.
 - It never subscribes to MQTT and never opens the database. If the dashboard is down,
   nothing else is affected.
 - **Live versus history.** The TUI is pushed every event by the broker and shows what
@@ -193,7 +196,7 @@ sequenceDiagram
   B->>T: deliver status: what monitor-poultry received
 ```
 
-**Storage and history** (implemented; Streamlit planned)
+**Storage and history** (implemented)
 
 ```mermaid
 sequenceDiagram
@@ -209,7 +212,7 @@ sequenceDiagram
   A->>DB: INSERT ... ON CONFLICT (event_id) DO NOTHING
   A-->>I: 200 stored / duplicates
   loop every few seconds
-    S->>A: GET /api/measurements?device_id=...&from=...
+    S->>A: GET /api/measurements/series?device_id=...&from=...
     A->>DB: SELECT ...
     DB-->>A: rows
     A-->>S: JSON
@@ -245,8 +248,11 @@ flowchart TB
     dev["device-aquaculture / poultry / cattle<br/>simulator"]
     mon["monitor-aquaculture / poultry / cattle / all<br/>consumers.monitor"]
     tools["tui · smoke · workers · broker-relay<br/>tui, testing, tools"]
-    pl["ingestion · alerts<br/>consumers.ingestion, consumers.alerts<br/>dashboard (planned)"]
+    pl["ingestion · alerts<br/>consumers.ingestion, consumers.alerts"]
     api["api<br/>storage (only user)"]
+  end
+  subgraph IMG3["image monitoring-mqtt/dashboard (app + Streamlit)"]
+    dash["dashboard<br/>dashboard"]
   end
   pg[("postgres<br/>(volume pgdata)")]
   core["monitoring_mqtt.core<br/>topics · payloads · registry · status · MQTT client"]
@@ -256,16 +262,20 @@ flowchart TB
   pl --> core
   api --> core
   pl -. "HTTP" .-> api
+  dash -. "HTTP" .-> api
   api -. "SQL" .-> pg
 ```
 
 - **One application image**, one Python module per service; Compose only changes the
-  command and the environment. The broker has its own image.
+  command and the environment. The broker has its own image, and so does the dashboard:
+  Streamlit and its data libraries would add hundreds of megabytes to the image every
+  device container (and Raspberry Pi) runs.
 - **Module rule:** `core` depends on nothing in the project; `simulator`, `consumers`,
-  `tui` and `tools` depend only on `core`, never on each other; the CLI is the only part
-  that knows about Docker.
-- **Ports on the host** (loopback by default): broker `1883`, API `8000`; planned
-  dashboard `8501`.
+  `tui`, `tools` and `dashboard` depend only on `core` (the TUI, the control tool and the
+  API also read the device catalog from `simulator`); only `api` uses `storage`; the CLI
+  is the only part that knows about Docker. A unit test checks these rules.
+- **Ports on the host** (loopback by default): broker `1883`, API `8000`, dashboard
+  `8501`.
 
 ## 8. Orchestration
 
@@ -278,8 +288,8 @@ flowchart TB
   `workers`) run under the `tools` profile.
 - **Several machines.** `STACK_ROLES` splits the stack, for example the broker on a
   Raspberry Pi and devices on other computers ([distributed.md](distributed.md)). The
-  storage (PostgreSQL, API, ingestion) and the alert engine are the roles `storage` and
-  `alerts`; the planned dashboard would join the same scheme.
+  storage (PostgreSQL, API, ingestion), the alert engine and the dashboard are the roles
+  `storage`, `alerts` and `dashboard`.
 
 ## 9. Guarantees and limits
 
