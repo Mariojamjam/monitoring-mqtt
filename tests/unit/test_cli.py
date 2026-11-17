@@ -128,3 +128,56 @@ def test_doctor_checks_the_api_on_storage_machines(project: Path) -> None:
     assert stopped.status is doctor.Status.WARN
     (project / ".env").write_text("STACK_ROLES=broker,devices\n")
     assert doctor.check_api(project, answering(200), environment="host (Linux)") == []
+
+
+def test_doctor_checks_the_dashboard(project: Path) -> None:
+    (ok,) = doctor.check_dashboard(project, lambda url: 200, environment="host (Linux)")
+    assert ok.status is doctor.Status.OK and "http://127.0.0.1:8501" in ok.detail
+    (inside,) = doctor.check_dashboard(project, lambda url: 200, environment="devcontainer")
+    assert inside.status is doctor.Status.OK and "not checked" in inside.detail
+    (project / ".env").write_text("STACK_ROLES=broker,devices\n")
+    assert doctor.check_dashboard(project, lambda url: 200, environment="host (Linux)") == []
+
+
+def test_dashboard_command_opens_the_browser(project: Path, monkeypatch) -> None:
+    from monitoring_mqtt.cli import dashboard
+
+    opened: list[str] = []
+    monkeypatch.setattr(dashboard, "detect_environment", lambda: "host (Linux)")
+    monkeypatch.setattr(dashboard.webbrowser, "open", opened.append)
+    monkeypatch.setattr(dashboard, "fetch_status", lambda url: 200)
+    result = runner.invoke(app, ["--project-dir", str(project), "dashboard"])
+    assert result.exit_code == 0 and opened == ["http://127.0.0.1:8501"]
+    monkeypatch.setattr(dashboard, "fetch_status", lambda url: 502)
+    result = runner.invoke(app, ["--project-dir", str(project), "dashboard", "--no-open"])
+    assert result.exit_code == 1 and "stack up" in result.output and len(opened) == 1
+
+
+def test_doctor_checks_the_clock(project: Path, monkeypatch) -> None:
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    def answering(value: str):
+        return lambda args: subprocess.CompletedProcess(args, 0, stdout=value + "\n")
+
+    host = "host (Linux)"
+    (ok,) = doctor.check_clock(project, answering("yes"), environment=host)
+    assert ok.status is Status.OK
+    (unsynced,) = doctor.check_clock(project, answering("no"), environment=host)
+    assert unsynced.status is Status.WARN and "NTP" in unsynced.detail
+    (inside,) = doctor.check_clock(project, answering("no"), environment="devcontainer")
+    assert inside.status is Status.OK  # a container uses the host's clock
+
+    (project / ".env").write_text(
+        "STACK_ROLES=devices,monitors\nMQTT_BROKER_HOST=pi.local\n"
+        "REMOTE_API_URL=http://10.0.0.5:8000\n"
+    )
+    _, close = doctor.check_clock(project, answering("yes"), lambda url: 0.4, environment=host)
+    assert close.status is Status.OK and "+0.4 s" in close.detail
+    _, far = doctor.check_clock(project, answering("yes"), lambda url: -3.2, environment=host)
+    assert far.status is Status.WARN and "-3.2 s" in far.detail
+
+    def unreachable(url: str) -> float:
+        raise OSError("connection refused")
+
+    _, down = doctor.check_clock(project, answering("yes"), unreachable, environment=host)
+    assert down.status is Status.WARN

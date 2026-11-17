@@ -76,8 +76,8 @@ class Store:
     def list_measurements(self, **filters) -> queries.Page:
         return self._read(lambda c: queries.list_measurements(c, **filters))
 
-    def series(self, device_id: str, bucket_seconds: float, **filters):
-        return self._read(lambda c: queries.series(c, device_id, bucket_seconds, **filters))
+    def series(self, bucket_seconds: float, **filters):
+        return self._read(lambda c: queries.series(c, bucket_seconds, **filters))
 
     def list_alerts(self, **filters) -> queries.Page:
         return self._read(lambda c: queries.list_alerts(c, **filters))
@@ -90,6 +90,9 @@ class Store:
 
     def get_run(self, run_id: str):
         return self._read(lambda c: queries.get_run(c, run_id))
+
+    def run_window(self, run_id: str, since, until):
+        return self._read(lambda c: queries.run_window(c, run_id, since, until))
 
     def stats(self):
         return self._read(queries.stats)

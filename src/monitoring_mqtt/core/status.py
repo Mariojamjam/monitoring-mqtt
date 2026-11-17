@@ -1,8 +1,12 @@
-"""Observability plane: subscribers announce their status through the broker.
+"""Observability plane: clients announce their status through the broker.
 
 MQTT does not expose who subscribes to what, so every monitor publishes its own status::
 
     monitoring/status/v1/monitors/{client_id}
+
+Device workers publish theirs too, with what their devices generated and published::
+
+    monitoring/status/v1/workers/{worker_id}
 
 - ``online`` (retained) on every connection and then periodically, with its counters;
 - ``offline`` (retained) as the connection's Last Will, published by the broker when the
@@ -10,7 +14,8 @@ MQTT does not expose who subscribes to what, so every monitor publishes its own 
 - ``stopped`` (not retained) on a clean shutdown, followed by an empty retained payload
   that removes the status.
 
-This plane is for operators and observer tools such as the TUI. Publishers never read it:
+The same three states apply to both. This plane is for operators and observer tools
+(the TUI, the experiment probe). Publishers never read it:
 devices publish the same way whether or not anyone consumes. It lives outside
 ``monitoring/v1/#``, so telemetry subscribers never receive it.
 """
@@ -30,6 +35,7 @@ from monitoring_mqtt.core.topics import SEGMENT_PATTERN, TELEMETRY_ROOT, validat
 
 STATUS_PREFIX = f"{TELEMETRY_ROOT}/status/v1"
 MONITOR_STATUS_FILTER = f"{STATUS_PREFIX}/monitors/+"
+WORKER_STATUS_FILTER = f"{STATUS_PREFIX}/workers/+"
 STATUS_QOS = 1
 STATUS_INTERVAL_SECONDS = 5.0  # online status refresh period (part of the contract)
 NODE_NAME_MAX_LENGTH = 64
@@ -50,6 +56,10 @@ def node_name(env: Mapping[str, str] | None = None) -> str | None:
 
 def monitor_status_topic(client_id: str) -> str:
     return f"{STATUS_PREFIX}/monitors/{validate_segment(client_id, 'client_id')}"
+
+
+def worker_status_topic(worker_id: str) -> str:
+    return f"{STATUS_PREFIX}/workers/{validate_segment(worker_id, 'worker_id')}"
 
 
 class MonitorState(StrEnum):
@@ -84,8 +94,9 @@ class ReceivedMessage(_Model):
 
 
 class MonitorCounters(_Model):
-    received: Count
+    received: Count  # every delivery, duplicates included
     invalid: Count
+    duplicates: Count = 0  # deliveries whose event_id this monitor had already received
     devices_seen: Count
     by_domain: dict[str, Count]
     latency_ms: LatencyStats | None = None
@@ -147,4 +158,53 @@ class MonitorStatus(_Model):
 
     @classmethod
     def from_payload(cls, payload: bytes | str) -> MonitorStatus:
+        return cls.model_validate_json(payload)
+
+
+class PublisherCounters(_Model):
+    """What one virtual device did since its worker started.
+
+    ``generated`` is its latest sequence number. ``published`` were handed to the MQTT
+    client, ``failed`` were not (disconnected, or the client refused them), and ``acked``
+    were confirmed: the broker's PUBACK with QoS 1, written to the socket with QoS 0.
+    """
+
+    device_id: Segment
+    generated: Count
+    published: Count
+    acked: Count
+    failed: Count
+
+
+class WorkerStatus(_Model):
+    """Retained status of one device worker, refreshed like a monitor's."""
+
+    schema_version: Literal[1] = 1
+    worker_id: Segment
+    run_id: NonEmpty
+    node: NodeName | None = None
+    hostname: NonEmpty
+    state: MonitorState
+    qos: Annotated[int, Field(ge=0, le=2)]
+    started_at: AwareDatetime
+    updated_at: AwareDatetime
+    devices: list[PublisherCounters] = []  # empty in the Last Will (offline)
+
+    @field_validator("started_at", "updated_at")
+    @classmethod
+    def _normalize_to_utc(cls, value: datetime) -> datetime:
+        return value.astimezone(UTC)
+
+    @property
+    def topic(self) -> str:
+        return worker_status_topic(self.worker_id)
+
+    def total(self, field: str) -> int:
+        return sum(getattr(d, field) for d in self.devices)
+
+    def to_payload(self) -> bytes:
+        return self.model_dump_json().encode("utf-8")
+
+    @classmethod
+    def from_payload(cls, payload: bytes | str) -> WorkerStatus:
         return cls.model_validate_json(payload)

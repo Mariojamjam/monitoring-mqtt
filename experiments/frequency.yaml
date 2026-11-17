@@ -1,0 +1,18 @@
+# The same 20 devices publishing faster and faster: 4 to 200 messages per second.
+schema_version: 1
+name: frequency
+description: 20 devices, publish interval 5 s down to 0.1 s
+warmup: 30s
+duration: 2m
+repetitions: 3
+set:
+  run.log_level: WARNING
+  workers.dissolved_oxygen_probe.replicas: 0
+  workers.rumen_ph_bolus.replicas: 0
+  workers.ammonia_detector: {replicas: 4, devices_per_worker: 5}
+  monitors: {aquaculture: {replicas: 0}, poultry: {replicas: 1}, cattle: {replicas: 0}}
+sweep:
+  devices.publish_interval_seconds: [5, 1, 0.5, 0.2, 0.1]
+stop_when_saturated: true
+report:
+  charts: [throughput, latency, latency_storage, delivery, cpu, broker]

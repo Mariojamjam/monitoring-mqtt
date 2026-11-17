@@ -1,0 +1,25 @@
+# How far one machine goes: more devices (one MQTT connection each) until the system no
+# longer keeps up. The matrix of the technical plan; stops at the first saturated point.
+schema_version: 1
+name: scale
+description: Devices 3 to 500 (one connection each) until saturation
+warmup: 30s
+duration: 2m
+repetitions: 3
+set:
+  run.log_level: WARNING
+  devices.publish_interval_seconds: 1
+  workers.dissolved_oxygen_probe.replicas: 0
+  workers.rumen_ph_bolus.replicas: 0
+  monitors: {aquaculture: {replicas: 0}, poultry: {replicas: 1}, cattle: {replicas: 0}}
+sweep:
+  workers.ammonia_detector:
+    - {replicas: 1, devices_per_worker: 3}
+    - {replicas: 5, devices_per_worker: 10}
+    - {replicas: 10, devices_per_worker: 10}
+    - {replicas: 10, devices_per_worker: 25}
+    - {replicas: 20, devices_per_worker: 25}
+stop_when_saturated: true
+report:
+  x: devices
+  charts: [throughput, latency, latency_storage, delivery, cpu, memory, broker]

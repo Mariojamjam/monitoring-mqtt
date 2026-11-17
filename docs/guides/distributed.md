@@ -17,16 +17,19 @@ and the commands stay the same; only where each service runs changes.
 ## Machine settings
 
 Each machine describes its part in its own `.env` (git-ignored, copied from
-[`.env.example`](../.env.example)). Shell variables take precedence over the file.
+[`.env.example`](../../.env.example)). Shell variables take precedence over the file.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `STACK_ROLES` | all roles | Parts of the stack that run on this machine: `broker`, `devices`, `monitors`, `storage` (PostgreSQL, API, ingestion consumer), `alerts` (alert engine) |
+| `STACK_ROLES` | all roles | Parts of the stack that run on this machine: `broker`, `devices`, `monitors`, `storage` (PostgreSQL, API, ingestion consumer), `alerts` (alert engine), `dashboard` (Streamlit) |
 | `MQTT_BROKER_HOST` | empty | Broker to use when this machine has no `broker` role: IP address, hostname, `127.0.0.1` for a tunnel on this machine, or `host.docker.internal` |
 | `MQTT_BROKER_PORT` | `1883` | Port of that broker (only with `MQTT_BROKER_HOST`) |
 | `MQTT_BIND_ADDRESS` | `127.0.0.1` | Address the local broker is published on; `0.0.0.0` accepts other machines |
 | `MQTT_HOST_PORT` | `1883` | Port the local broker is published on |
 | `API_BIND_ADDRESS` / `API_HOST_PORT` | `127.0.0.1` / `8000` | Where the API is published (`storage` role) |
+| `DASHBOARD_BIND_ADDRESS` / `DASHBOARD_HOST_PORT` | `127.0.0.1` / `8501` | Where the dashboard is published (`dashboard` role) |
+| `REMOTE_API_URL` | this stack's API | The API on another machine, read by the dashboard and by experiments; required when this machine runs `dashboard` without `storage` |
+| `EXPERIMENT_DOCKER_CONTEXTS` | empty | Docker contexts of the other machines of an experiment, which experiments sample and act on ([experiments.md](../evaluation/experiments.md)) |
 | `NODE_NAME` | hostname where the CLI runs | Label of this machine in worker claims and monitor status. Set it in a Dev Container, whose hostname is not the machine's |
 
 The CLI checks the combination before calling Docker. A machine either runs the broker
@@ -62,14 +65,25 @@ MQTT_BROKER_HOST=192.168.0.50
 **History and alerts** on a computer with more memory than the Pi:
 
 ```dotenv
-STACK_ROLES=storage,alerts
+STACK_ROLES=storage,alerts,dashboard
 MQTT_BROKER_HOST=192.168.0.50
 ```
 
 The ingestion consumer and the alert engine connect to the Pi's broker like any other
-client; PostgreSQL and the API stay on this computer. Run `storage` and `alerts` on one
-machine each: they use fixed client ids, so a second copy on another machine would take
-over the first one's session.
+client; PostgreSQL, the API and the dashboard stay on this computer. Run `storage` and
+`alerts` on one machine each: they use fixed client ids, so a second copy on another
+machine would take over the first one's session.
+
+**Dashboard on a laptop**, reading the API of the history computer (for example
+`192.168.0.60`, with `API_BIND_ADDRESS=0.0.0.0` there):
+
+```dotenv
+STACK_ROLES=dashboard
+MQTT_BROKER_HOST=192.168.0.50
+REMOTE_API_URL=http://192.168.0.60:8000
+```
+
+The dashboard never speaks MQTT; it needs only the API. Any number of dashboards may run.
 
 Start the broker first, then the other machines:
 
@@ -97,7 +111,7 @@ measurements generated meanwhile are dropped and leave a visible `sequence` gap.
   container id. The CLI can only compare containers on its own machine, so every worker
   also claims its id in the broker before creating devices. A worker whose id is already
   claimed by another machine switches to a random id. `stack workers` marks those ids as
-  `own id`. The protocol is described in [mqtt-contract.md](mqtt-contract.md#worker-registry).
+  `own id`. The protocol is described in [mqtt-contract.md](../design/mqtt-contract.md#worker-registry).
 
 ## Checks
 
@@ -163,9 +177,14 @@ side are not supported.
 
 ## Raspberry Pi
 
+The step-by-step guide, with ready-made `.env` files for a gateway (broker, history,
+alerts, dashboard) and a field machine (devices, monitors), is
+[deploy-raspberry-pi.md](deploy-raspberry-pi.md). In short:
+
 - Use a 64-bit OS with Docker Engine and the Compose plugin. The images used by the stack
-  (`eclipse-mosquitto`, `python:3.12-slim`, `uv`) are published for `arm64`, and every
-  machine builds the project images locally with `stack up --build`.
+  (`eclipse-mosquitto`, `python:3.12-slim`, `uv`, `postgres`) are published for `arm64`,
+  CI builds the project images for `arm64`, and every machine builds them locally with
+  `stack up --build`.
 - Install the CLI with `python scripts/bootstrap.py`, as on any other host.
 - Allow incoming TCP connections on the broker port (1883) in the Pi's firewall.
 - Prefer a wired connection, or record the network used, because it affects latency and
@@ -177,6 +196,10 @@ Monitors compute latency as the time of arrival minus the device timestamp. With
 and monitors on different machines, latency is only meaningful when their clocks are
 synchronized. Enable NTP on every machine, preferably against the same server. A Raspberry
 Pi has no hardware clock and depends on NTP after every boot.
+
+`monitoring-mqtt doctor` reports whether this machine's clock is synchronized
+(`timedatectl`) and, with `REMOTE_API_URL`, its difference from the API's machine
+(from the HTTP `Date` header, to about one second).
 
 ## Security and limits
 

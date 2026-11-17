@@ -2,7 +2,7 @@
 # minute (30 s long, both directions where the type has them). The alert engine applies
 # config/alerts.yaml; the history (API) keeps every alert, and the workers announce every
 # anomaly on monitoring/sim/v1/devices/{device_id}. Compare them to evaluate the rules:
-# detections, misses, false alarms and detection delay (docs/alerts.md).
+# detections, misses, false alarms and detection delay (docs/design/alerts.md).
 #
 #   monitoring-mqtt stack up -c config/examples/alerts-demo.yaml
 #   monitoring-mqtt tui          # Mode column: anomaly ↑ next to alert warning/critical

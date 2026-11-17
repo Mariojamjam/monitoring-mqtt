@@ -47,8 +47,24 @@ markers = ["integration: needs Docker; starts an isolated stack (monitoring-mqtt
 # Starlette recommends httpx2 for its test client; httpx is what the project uses.
 filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]
 
+[tool.uv]
+# `uv sync` installs every group (the dashboard and the experiment report have unit tests);
+# the images pick their groups explicitly (Dockerfile).
+default-groups = ["dev", "dashboard", "experiments"]
+
 [dependency-groups]
+# The Streamlit dashboard; only its image installs it (Dockerfile target `dashboard`).
+dashboard = [
+    "altair>=6.3.0",
+    "pandas>=3.1.1",
+    "streamlit>=1.67.0",
+]
 dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.4",
+]
+# The experiment report (charts), run on the host by `monitoring-mqtt experiment report`.
+experiments = [
+    "matplotlib>=3.11.2",
+    "pandas>=3.1.1",
 ]

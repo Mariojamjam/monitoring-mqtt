@@ -69,3 +69,19 @@ def test_sequence_increases_and_gaps_when_disconnected() -> None:
 
     sequences = [json.loads(p[1])["sequence"] for p in client.published]
     assert sequences == [1, 3]
+
+
+def test_publisher_counters() -> None:
+    client = FakeClient()
+    device = make_device(client)
+    device.publish_next()
+    device._on_publish(client, None, 1, None, None)  # the broker's PUBACK
+    client.connected = False
+    device.publish_next()  # generated, not sent
+    counters = device.counters()
+    assert (counters.generated, counters.published, counters.acked, counters.failed) == (
+        2,
+        1,
+        1,
+        1,
+    )

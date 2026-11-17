@@ -11,6 +11,7 @@ from monitoring_mqtt.core import mqtt as mqtt_helpers
 from monitoring_mqtt.core.config import MqttSettings
 from monitoring_mqtt.core.logging import kv
 from monitoring_mqtt.core.models import Measurement
+from monitoring_mqtt.core.status import PublisherCounters
 from monitoring_mqtt.simulator.generators.base import MeasurementGenerator
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,25 @@ class VirtualDevice:
         self.generator = generator
         self.settings = settings
         self.client = client or mqtt_helpers.create_client(device_id, settings)
+        self.client.on_publish = self._on_publish
         self.sequence = 0
+        # Publisher-side counters (worker status): written by this thread and the network
+        # thread, read for the status; plain ints are enough under the GIL.
+        self.published = 0
+        self.acked = 0
+        self.failed = 0
+
+    def _on_publish(self, client, userdata, mid, reason_code, properties) -> None:
+        self.acked += 1
+
+    def counters(self) -> PublisherCounters:
+        return PublisherCounters(
+            device_id=self.device_id,
+            generated=self.sequence,
+            published=self.published,
+            acked=self.acked,
+            failed=self.failed,
+        )
 
     def start(self) -> None:
         mqtt_helpers.start(self.client, self.settings)
@@ -89,6 +108,7 @@ class VirtualDevice:
         """Publish an already generated measurement; return it if handed to the client."""
         fields = kv(device_id=self.device_id, seq=measurement.sequence)
         if not self.client.is_connected():
+            self.failed += 1
             logger.warning("measurement dropped, broker unavailable %s", fields)
             return None
 
@@ -96,8 +116,10 @@ class VirtualDevice:
             measurement.topic, measurement.to_payload(), qos=self.settings.qos, retain=False
         )
         if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            self.failed += 1
             logger.warning("publish failed %s rc=%s", fields, mqtt.error_string(info.rc))
             return None
+        self.published += 1
 
         logger.info(
             "published %s",

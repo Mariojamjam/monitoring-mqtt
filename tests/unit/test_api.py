@@ -8,12 +8,14 @@ from fastapi.testclient import TestClient
 
 from monitoring_mqtt.api.app import create_app
 from monitoring_mqtt.api.docs import SCALAR_SCRIPT, standalone_page
+from monitoring_mqtt.core.rules import Rule, RulesFile
 from monitoring_mqtt.storage.queries import InvalidCursorError, Page, decode_cursor, encode_cursor
 from monitoring_mqtt.storage.store import StorageUnavailableError
 from monitoring_mqtt.storage.writes import WriteResult
 
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 REPO = Path(__file__).resolve().parents[2]
+API_REFERENCE = REPO / "docs" / "reference" / "api"
 
 
 class FakeStore:
@@ -55,7 +57,7 @@ class FakeStore:
         self.calls.append(("alerts", filters))
         return Page([], None)
 
-    def series(self, device_id, bucket_seconds, **filters):
+    def series(self, bucket_seconds, **filters):
         self.calls.append(("series", {"bucket": bucket_seconds, **filters}))
         return [{"bucket_start": NOW, "count": 2, "avg": 1.5, "min": 1.0, "max": 2.0}]
 
@@ -63,7 +65,23 @@ class FakeStore:
         return None
 
     def get_run(self, run_id):
-        return None
+        return {"run_id": run_id} if run_id == "r1" else None
+
+    def run_window(self, run_id, since, until):
+        self.calls.append(("window", {"since": since, "until": until}))
+        delays = dict.fromkeys(("avg", "p50", "p95", "p99", "max"), 1.0)
+        return {
+            "run_id": run_id,
+            "since": since,
+            "until": until,
+            "measurements": 10,
+            "devices": 2,
+            "domains": [],
+            "sequence_gaps": 1,
+            "generated_to_received_ms": delays,
+            "generated_to_stored_ms": delays,
+            "alerts_raised": {"warning": 1},
+        }
 
 
 @pytest.fixture
@@ -141,6 +159,40 @@ def test_series_bucket(client: TestClient, store: FakeStore) -> None:
                       ).status_code == 422  # fmt: skip
 
 
+def test_series_of_a_domain(client: TestClient, store: FakeStore) -> None:
+    params = {"domain": "poultry", "run_id": "r1", "bucket": "10s"}
+    body = client.get("/api/measurements/series", params=params).json()
+    assert body["domain"] == "poultry" and body["device_id"] is None
+    _, filters = store.calls[-1]
+    assert filters["domain"] == "poultry" and filters["run_id"] == "r1"
+    assert filters["device_id"] is None
+    for params in ({}, {"device_id": "d1", "domain": "poultry"}):  # exactly one of them
+        assert client.get("/api/measurements/series", params=params).status_code == 422
+
+
+def test_catalog_has_bands_and_rules(store: FakeStore, monkeypatch) -> None:
+    monkeypatch.chdir(REPO)
+    monkeypatch.delenv("ALERT_RULES", raising=False)
+    monkeypatch.delenv("DEVICES_CONFIG", raising=False)
+    store.down = True  # static: no database needed
+    body = TestClient(create_app(store=store)).get("/api/catalog").json()
+    types = {t["name"]: t for t in body["device_types"]}
+    oxygen = types["dissolved_oxygen_probe"]
+    assert oxygen["domain"] == "aquaculture" and oxygen["unit"] == "mg/L"
+    assert oxygen["bounds"]["minimum"] <= oxygen["normal"]["minimum"] < oxygen["normal"]["maximum"]
+    rules = {r["id"]: r for r in body["alert_rules"]}
+    assert rules["oxygen-low"]["condition"] == "below"
+    assert rules["oxygen-low"]["device_type"] == "dissolved_oxygen_probe"
+
+
+def test_catalog_follows_the_experiment_rules(store: FakeStore, monkeypatch) -> None:
+    monkeypatch.chdir(REPO)
+    monkeypatch.setenv("ALERT_RULES", RulesFile(schema_version=1, rules=[
+        Rule(id="r", device_type="ammonia_detector", above=20, clear_at=18)]).to_env())  # fmt: skip
+    (rule,) = TestClient(create_app(store=store)).get("/api/catalog").json()["alert_rules"]
+    assert (rule["threshold"], rule["clear_at"], rule["severity"]) == (20, 18, "warning")
+
+
 def test_not_found(client: TestClient) -> None:
     assert client.get("/api/devices/x").status_code == 404
     assert client.get("/api/runs/x").status_code == 404
@@ -163,17 +215,28 @@ def test_reference_page_and_openapi(client: TestClient) -> None:
 
 
 def test_committed_openapi_document_is_up_to_date(client: TestClient) -> None:
-    committed = json.loads((REPO / "docs" / "openapi.json").read_text(encoding="utf-8"))
+    committed = json.loads((API_REFERENCE / "openapi.json").read_text(encoding="utf-8"))
     assert committed == client.get("/openapi.json").json(), (
-        "docs/openapi.json is out of date: run "
-        "`uv run python -m monitoring_mqtt.api.docs > docs/openapi.json`"
+        "docs/reference/api/openapi.json is out of date: run "
+        "`uv run python -m monitoring_mqtt.api.docs > docs/reference/api/openapi.json`"
     )
 
 
 def test_committed_reference_page_is_up_to_date(client: TestClient) -> None:
-    committed = (REPO / "docs" / "api-reference.html").read_text(encoding="utf-8")
+    committed = (API_REFERENCE / "index.html").read_text(encoding="utf-8")
     expected = standalone_page("Monitoring MQTT API reference", client.get("/openapi.json").json())
     assert committed == expected, (
-        "docs/api-reference.html is out of date: run "
-        "`uv run python -m monitoring_mqtt.api.docs --html > docs/api-reference.html`"
+        "docs/reference/api/index.html is out of date: run "
+        "`uv run python -m monitoring_mqtt.api.docs --html > docs/reference/api/index.html`"
     )
+
+
+def test_run_window(client: TestClient, store: FakeStore) -> None:
+    window = {"from": NOW.isoformat(), "to": (NOW + timedelta(minutes=2)).isoformat()}
+    body = client.get("/api/runs/r1/window", params=window).json()
+    assert body["measurements"] == 10 and body["generated_to_stored_ms"]["p95"] == 1.0
+    assert store.calls[-1][1]["since"] == NOW
+    assert client.get("/api/runs/r1/window", params={"from": window["from"]}).status_code == 422
+    reversed_window = {"from": window["to"], "to": window["from"]}
+    assert client.get("/api/runs/r1/window", params=reversed_window).status_code == 422
+    assert client.get("/api/runs/nope/window", params=window).status_code == 404

@@ -91,7 +91,8 @@ class SeriesPoint(BaseModel):
 
 
 class Series(BaseModel):
-    device_id: str
+    device_id: str | None
+    domain: str | None
     bucket_seconds: float
     points: list[SeriesPoint]
 
@@ -113,6 +114,40 @@ class Run(BaseModel):
 
 class RunDetail(Run):
     domains: list[DomainCount]
+    duration_seconds: float = Field(description="From the first to the last measurement")
+    measurements_per_second: float | None
+    generated_to_received_ms: float | None = Field(
+        description="Average: device → ingestion consumer (the MQTT path)"
+    )
+    generated_to_stored_ms: float | None = Field(description="Average: device → database")
+    generated_to_stored_p95_ms: float | None = Field(description="95th percentile of the same")
+    generated_to_stored_max_ms: float | None
+    sequence_gaps: int = Field(
+        description="Measurements missing between each device's lowest and highest stored "
+        "sequence, summed over the devices"
+    )
+    alerts_by_severity: dict[str, int]
+
+
+class Delays(BaseModel):
+    avg: float | None
+    p50: float | None
+    p95: float | None
+    p99: float | None
+    max: float | None
+
+
+class RunWindow(BaseModel):
+    run_id: str
+    since: datetime = Field(description="Start of the window, inclusive (generation time)")
+    until: datetime = Field(description="End of the window, exclusive")
+    measurements: int
+    devices: int
+    domains: list[DomainCount]
+    sequence_gaps: int = Field(description="Missing sequence numbers inside the window")
+    generated_to_received_ms: Delays = Field(description="Device → ingestion consumer")
+    generated_to_stored_ms: Delays = Field(description="Device → database")
+    alerts_raised: dict[str, int] = Field(description="Alerts raised in the window, by severity")
 
 
 class Stats(BaseModel):
@@ -128,3 +163,35 @@ class Stats(BaseModel):
     generated_to_stored_ms: float | None = Field(
         description="Average over the latest 1000 measurements: device → database"
     )
+
+
+class Band(BaseModel):
+    minimum: float
+    maximum: float
+
+
+class DeviceTypeInfo(BaseModel):
+    name: str
+    domain: str
+    metric: str
+    unit: str | None
+    bounds: Band = Field(description="Values the device can produce")
+    normal: Band | None = Field(description="Synthetic normal band (operating range)")
+    anomaly_low: float | None = Field(description="Where a low anomaly drives the value")
+    anomaly_high: float | None = Field(description="Where a high anomaly drives the value")
+
+
+class AlertRuleInfo(BaseModel):
+    id: str
+    device_type: str
+    severity: str
+    condition: str = Field(description="`above` or `below` the threshold")
+    threshold: float
+    clear_at: float = Field(description="The alert clears back past this value (hysteresis)")
+    after: int = Field(description="Violations in a row that raise the alert")
+    clear_after: int = Field(description="Values back past `clear_at` that clear it")
+
+
+class Catalog(BaseModel):
+    device_types: list[DeviceTypeInfo]
+    alert_rules: list[AlertRuleInfo]

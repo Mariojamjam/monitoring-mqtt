@@ -17,6 +17,7 @@ import socket
 import statistics
 import sys
 import threading
+import uuid
 from collections import Counter, deque
 from datetime import UTC, datetime
 
@@ -45,6 +46,7 @@ from monitoring_mqtt.core.topics import InvalidTopicError, validate_filter
 logger = logging.getLogger("monitoring_mqtt.monitor")
 
 LATENCY_WINDOW = 1_000  # latest samples used for avg/p95
+SEEN_EVENTS = 256  # event ids remembered per device to count duplicate deliveries
 STOP_PUBLISH_TIMEOUT_SECONDS = 2.0
 
 
@@ -75,6 +77,9 @@ class MonitorStats:
         self._lock = threading.Lock()
         self.received = 0
         self.invalid = 0
+        self.duplicates = 0
+        # Latest event ids per device: a repeated one is a duplicate delivery (QoS 1).
+        self.seen: dict[str, deque[uuid.UUID]] = {}
         self.by_domain: Counter[str] = Counter()
         self.devices: set[str] = set()
         self.latencies: deque[float] = deque(maxlen=LATENCY_WINDOW)
@@ -85,6 +90,11 @@ class MonitorStats:
     def record(self, topic: str, measurement: Measurement, latency_ms: float, at: datetime) -> None:
         with self._lock:
             self.received += 1
+            seen = self.seen.setdefault(measurement.device_id, deque(maxlen=SEEN_EVENTS))
+            if measurement.event_id in seen:
+                self.duplicates += 1
+            else:
+                seen.append(measurement.event_id)
             self.by_domain[measurement.domain] += 1
             self.devices.add(measurement.device_id)
             self.latencies.append(latency_ms)
@@ -108,6 +118,7 @@ class MonitorStats:
             return MonitorCounters(
                 received=self.received,
                 invalid=self.invalid,
+                duplicates=self.duplicates,
                 devices_seen=len(self.devices),
                 by_domain=dict(self.by_domain),
                 latency_ms=latency,

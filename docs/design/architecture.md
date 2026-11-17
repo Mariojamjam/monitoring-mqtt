@@ -5,9 +5,8 @@ telemetry to topics on a central MQTT broker. Subscribers declare their interest
 topic filters, and the broker routes each message to every matching subscription.
 Publishers and subscribers never communicate directly.
 
-This document describes what runs today in detail. For the overall picture, including the
-planned storage, alerts, API and dashboard, and how every part communicates, see
-[design.md](design.md).
+This document describes what runs today in detail. For the overall picture, how every
+part communicates (MQTT, HTTP, SQL), see [design.md](design.md).
 
 > This document describes what is currently implemented. It grows as components are added.
 
@@ -23,6 +22,8 @@ planned storage, alerts, API and dashboard, and how every part communicates, see
 | `smoke` service (profile `tools`) | Implemented | One-off end-to-end check started by `monitoring-mqtt test smoke`; never part of `stack up` |
 | `postgres`, `migrate`, `api`, `ingestion` services (role `storage`) | Implemented | History: PostgreSQL (volume `pgdata`), schema migrations, the FastAPI API (single owner of the database) and the MQTT → API bridge ([storage.md](storage.md), [api.md](api.md)) |
 | `alerts` service (role `alerts`) | Implemented | Alert engine: applies `config/alerts.yaml` to every measurement and publishes alert events on the broker ([alerts.md](alerts.md)) |
+| `dashboard` service (role `dashboard`) | Implemented | Streamlit dashboard on port 8501: history, alerts and run comparison, read from the API only; its own image ([dashboard.md](../guides/dashboard.md)) |
+| `experiment-probe` service (profile `tools`) | Implemented | One-off observer started by `monitoring-mqtt experiment run`: snapshots worker and monitor counters, samples the broker statistics and asks the API what was stored in the measured window ([experiments.md](../evaluation/experiments.md)) |
 | `control` service (profile `tools`) | Implemented | One-off live command to one device, started by `monitoring-mqtt device ...`; goes through the broker to the worker hosting the device |
 
 ## Configuration
@@ -200,7 +201,7 @@ Each service is a module entrypoint that runs inside the shared application imag
 | `control` | `python -m monitoring_mqtt.tools.control` (one-off, profile `tools`) |
 | `smoke` | `python -m monitoring_mqtt.testing.smoke` (one-off, profile `tools`) |
 | `workers` | `python -m monitoring_mqtt.tools.workers` (one-off, profile `tools`) |
-| `tui` | `python -m monitoring_mqtt.tui` (interactive one-off, profile `tools`; see [tui.md](tui.md)) |
+| `tui` | `python -m monitoring_mqtt.tui` (interactive one-off, profile `tools`; see [tui.md](../guides/tui.md)) |
 | `broker-relay` | `python -m monitoring_mqtt.tools.relay` (host network; only for a tunnel on the loopback with Docker Engine on Linux) |
 
 ## Deployment view
@@ -236,7 +237,7 @@ Each service is a module entrypoint that runs inside the shared application imag
   after the API is healthy.
 - **Several machines.** The same project can be split across machines, for example the
   broker on a Raspberry Pi and devices on other computers. Each machine runs the parts
-  listed in its `.env` and connects to the shared broker; see [distributed.md](distributed.md).
+  listed in its `.env` and connects to the shared broker; see [distributed.md](../guides/distributed.md).
 
 ## Smoke test
 
@@ -279,14 +280,14 @@ exits with `1`, without starting a container, when the stack is not running.
 | Ingestion consumer or alert engine down | Persistent session: the broker queues their measurements (up to 1000) and delivers them on reconnection; the alert engine restores its open alerts first |
 | Two workers with the same id | The later one switches to a random id before creating devices; a conflict found while running stops the later worker, which restarts with a new id |
 
-Measured examples of each case, and how to provoke them: [failures.md](failures.md).
+Measured examples of each case, and how to provoke them: [failures.md](../evaluation/failures.md).
 
 ## The CLI is outside the data path
 
 The CLI only translates commands into `docker compose` invocations. It never runs a
 publisher or subscriber in its own process, and the stack keeps running after the CLI exits.
 
-The terminal UI ([tui.md](tui.md)) is not in the data path either. It is a read-only
+The terminal UI ([tui.md](../guides/tui.md)) is not in the data path either. It is a read-only
 subscriber that observes telemetry, the worker registry, the monitor status and the
 broker's `$SYS` statistics. Nothing in the stack depends on it.
 
@@ -298,7 +299,7 @@ it to others (`MQTT_BIND_ADDRESS`) must stay on an isolated network or a private
 Any deployment beyond that requires authentication, TLS and ACLs.
 
 The stack can be split across machines (for example the broker on one machine and devices
-on others) through the machine settings in `.env`; see [distributed.md](distributed.md).
+on others) through the machine settings in `.env`; see [distributed.md](../guides/distributed.md).
 The components and the contract are the same; only where each service runs changes.
 
 A single broker is a single point of failure. The current architecture makes no claims of

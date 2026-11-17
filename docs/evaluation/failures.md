@@ -7,7 +7,7 @@ data. The observations below come from real runs of the default experiment on on
 treat them as examples, not guarantees.
 
 Follow any scenario live with `monitoring-mqtt tui` in another terminal (see
-[tui.md](tui.md#scenarios)).
+[tui.md](../guides/tui.md#scenarios)).
 
 ## Summary
 
@@ -132,7 +132,7 @@ Everything published during the outage was stored, in order, within 4 s of the r
 An unplanned 5-minute API outage (189 measurements buffered) ended the same way: no gap.
 Devices, monitors and the alert engine were not affected by any of them. Limits: what the
 ingestion buffer holds is lost if its process dies, and the broker queues at most 1000
-messages per consumer. Details in [storage.md](storage.md).
+messages per consumer. Details in [storage.md](../design/storage.md).
 
 Use `docker stop/start` on the container here. `docker compose start <service>` would also
 start the service's dependencies, such as `migrate`.
@@ -167,5 +167,5 @@ Observed with `config/examples/device-fault.yaml` (one worker, three ammonia det
 
 Each device has its own MQTT connection, so one device can be stopped or disconnected
 without touching the others. Every episode is announced on the simulation plane
-([simulation.md](simulation.md#ground-truth)). The other episode kinds (pause, delay,
-anomaly) and random instability are described in [simulation.md](simulation.md).
+([simulation.md](../design/simulation.md#ground-truth)). The other episode kinds (pause, delay,
+anomaly) and random instability are described in [simulation.md](../design/simulation.md).

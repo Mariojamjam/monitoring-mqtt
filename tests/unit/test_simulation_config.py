@@ -175,6 +175,17 @@ def test_experiment_parameters_reach_compose(tmp_path: Path) -> None:
     assert env["MQTT_RECONNECT_MAX_DELAY_SECONDS"] == "8"
 
 
+def test_dashboard_refresh_reaches_compose(tmp_path: Path) -> None:
+    text = HEADER + "  ammonia_detector: {replicas: 1, devices_per_worker: 1}\n"
+    sim = load_simulation(project_with(tmp_path, text + "dashboard: {refresh: 0s}\n"))
+    env = compose_env(sim, "r")
+    assert (env["DASHBOARD_REPLICAS"], env["DASHBOARD_REFRESH_SECONDS"]) == ("1", "0")
+    off = tmp_path / "off"
+    off.mkdir()
+    sim = load_simulation(project_with(off, text + "dashboard: {enabled: false}\n"))
+    assert compose_env(sim, "r")["DASHBOARD_REPLICAS"] == "0"
+
+
 def test_run_id_generated_once_when_null() -> None:
     sim = load_simulation(REPO)
     assert sim.run.run_id is None
@@ -203,6 +214,8 @@ def test_smoke_window_follows_publish_interval(tmp_path: Path) -> None:
         "devices: {publish_interval_seconds: 0}",
         "run: {log_level: verbose}",
         "run: {run_id: 'bad id with spaces'}",
+        "dashboard: {refresh: 5}",  # durations need a unit
+        "dashboard: {refresh: -1s}",
     ],
 )
 def test_invalid_experiment_parameters(tmp_path: Path, section: str) -> None:
@@ -232,8 +245,16 @@ def test_behaviour_reaches_the_workers(tmp_path: Path) -> None:
     )
 
 
-def test_no_behaviour_by_default() -> None:
+def test_repository_default_schedules_one_fault_per_domain() -> None:
     sim = load_simulation(REPO)
+    assert sim.behavior.describe() == "3 faults"
+    assert sim.behavior.anomalies is None and sim.behavior.instability is None
+    assert compose_env(sim, "run-1")["SIMULATION_BEHAVIOR"] != ""
+
+
+def test_no_behaviour_when_the_section_is_omitted(tmp_path: Path) -> None:
+    text = HEADER + "  ammonia_detector: {replicas: 1, devices_per_worker: 1}\n"
+    sim = load_simulation(project_with(tmp_path, text))
     assert compose_env(sim, "run-1")["SIMULATION_BEHAVIOR"] == ""
     assert sim.behavior.describe().startswith("none")
 
