@@ -4,10 +4,10 @@
 carried by the ingest batches (`Measurement`, `AlertEvent`) are added to the OpenAPI
 components so the reference documents them too.
 
-The versioned copies in ``docs/`` are generated without a database::
+The versioned copies in ``docs/reference/api/`` are generated without a database::
 
-    python -m monitoring_mqtt.api.docs > docs/openapi.json
-    python -m monitoring_mqtt.api.docs --html > docs/api-reference.html   # stand-alone page
+    python -m monitoring_mqtt.api.docs > docs/reference/api/openapi.json
+    python -m monitoring_mqtt.api.docs --html > docs/reference/api/index.html   # stand-alone page
 """
 
 from __future__ import annotations

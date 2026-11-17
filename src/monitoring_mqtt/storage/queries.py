@@ -349,6 +349,78 @@ def get_run(conn: Connection, run_id: str) -> dict[str, Any] | None:
     return run
 
 
+def _percentiles(conn: Connection, expr, where) -> dict[str, float | None]:
+    row = conn.execute(
+        select(
+            func.avg(expr),
+            func.percentile_cont(0.5).within_group(expr),
+            func.percentile_cont(0.95).within_group(expr),
+            func.percentile_cont(0.99).within_group(expr),
+            func.max(expr),
+        ).where(*where)
+    ).one()
+    return dict(zip(("avg", "p50", "p95", "p99", "max"), (_ms(v) for v in row), strict=True))
+
+
+def run_window(conn: Connection, run_id: str, since: datetime, until: datetime) -> dict[str, Any]:
+    """What was stored for a run's measurements generated in [since, until).
+
+    Experiments measure a fixed window, after a warm-up: counts, delays (percentiles) and
+    missing sequence numbers inside the window only.
+    """
+    m = measurements.c
+    where = (m.run_id == run_id, m.generated_at >= since, m.generated_at < until)
+    totals = conn.execute(
+        select(func.count(), func.count(m.device_id.distinct())).where(*where)
+    ).one()
+    domains = _rows(
+        conn.execute(
+            select(m.domain, func.count().label("measurements"),
+                   func.count(m.device_id.distinct()).label("devices"))
+            .where(*where)
+            .group_by(m.domain)
+            .order_by(m.domain)
+        )
+    )  # fmt: skip
+    per_device = (
+        select(
+            (func.max(m.sequence) - func.min(m.sequence) + 1
+             - func.count(m.sequence.distinct())).label("missing")
+        )
+        .where(*where)
+        .group_by(m.device_id)
+        .subquery()
+    )  # fmt: skip
+    gaps = conn.execute(
+        select(func.coalesce(func.sum(func.greatest(per_device.c.missing, 0)), 0))
+    ).scalar_one()
+    a = alerts.c
+    raised = {
+        r.severity: r.n
+        for r in conn.execute(
+            select(a.severity, func.count().label("n"))
+            .where(a.run_id == run_id, a.raised_at >= since, a.raised_at < until)
+            .group_by(a.severity)
+        )
+    }
+    return {
+        "run_id": run_id,
+        "since": since,
+        "until": until,
+        "measurements": totals[0],
+        "devices": totals[1],
+        "domains": domains,
+        "sequence_gaps": int(gaps),
+        "generated_to_received_ms": _percentiles(
+            conn, func.extract("epoch", m.received_at - m.generated_at), where
+        ),
+        "generated_to_stored_ms": _percentiles(
+            conn, func.extract("epoch", m.stored_at - m.generated_at), where
+        ),
+        "alerts_raised": raised,
+    }
+
+
 def stats(conn: Connection) -> dict[str, Any]:
     m = measurements.c
     totals = {

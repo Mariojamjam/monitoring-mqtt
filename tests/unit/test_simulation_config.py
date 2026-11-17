@@ -245,8 +245,16 @@ def test_behaviour_reaches_the_workers(tmp_path: Path) -> None:
     )
 
 
-def test_no_behaviour_by_default() -> None:
+def test_repository_default_schedules_one_fault_per_domain() -> None:
     sim = load_simulation(REPO)
+    assert sim.behavior.describe() == "3 faults"
+    assert sim.behavior.anomalies is None and sim.behavior.instability is None
+    assert compose_env(sim, "run-1")["SIMULATION_BEHAVIOR"] != ""
+
+
+def test_no_behaviour_when_the_section_is_omitted(tmp_path: Path) -> None:
+    text = HEADER + "  ammonia_detector: {replicas: 1, devices_per_worker: 1}\n"
+    sim = load_simulation(project_with(tmp_path, text))
     assert compose_env(sim, "run-1")["SIMULATION_BEHAVIOR"] == ""
     assert sim.behavior.describe().startswith("none")
 

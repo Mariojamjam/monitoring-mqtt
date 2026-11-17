@@ -15,7 +15,7 @@ broker ──MQTT (QoS 1, persistent session)──► ingestion ──HTTP POST
 | `postgres` | PostgreSQL 18 | The data, in the volume `pgdata`. Not published on the host |
 | `migrate` | `storage.migrate` | Runs once on every `stack up`: applies the schema migrations (Alembic), then exits. The API starts only after it succeeded |
 
-All four run with the `storage` role ([distributed.md](distributed.md)) when the experiment
+All four run with the `storage` role ([distributed.md](../guides/distributed.md)) when the experiment
 has `storage.enabled: true` (the default).
 
 ## Why a bridge, and not the API subscribing to MQTT

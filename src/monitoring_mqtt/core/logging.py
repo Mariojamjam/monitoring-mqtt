@@ -5,16 +5,18 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from typing import TextIO
 
 FORMAT = "%(asctime)s.%(msecs)03dZ %(levelname)-7s %(name)s %(message)s"
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 
-def configure_logging(level: str = "INFO") -> None:
-    """Configure the root logger to write to stdout (collected by Docker)."""
+def configure_logging(level: str = "INFO", stream: TextIO | None = None) -> None:
+    """Configure the root logger to write to stdout (collected by Docker), or to
+    ``stream`` for tools whose stdout carries data."""
     formatter = logging.Formatter(FORMAT, DATE_FORMAT)
     formatter.converter = time.gmtime
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(stream or sys.stdout)
     handler.setFormatter(formatter)
     root = logging.getLogger()
     root.handlers[:] = [handler]

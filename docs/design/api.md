@@ -7,14 +7,14 @@ writes through it and everything else reads through it ([storage.md](storage.md)
 |---|---|
 | Base URL | `http://127.0.0.1:8000` (`API_BIND_ADDRESS`, `API_HOST_PORT` in `.env`); the API routes are under **`/api`**, while `/health`, `/ready`, `/docs` and `/openapi.json` stay at the root |
 | Interactive reference | **`/docs`**: a [Scalar](https://scalar.com) API reference, with request examples and a client to try every route |
-| OpenAPI document | `/openapi.json`; a copy is versioned in [`openapi.json`](openapi.json) |
+| OpenAPI document | `/openapi.json`; a copy is versioned in [`openapi.json`](../reference/api/openapi.json) |
 | Format | JSON; times in ISO 8601 with a time zone (UTC) |
 
-The versioned `docs/openapi.json` is generated from the code and a unit test fails when it
-is out of date:
+The versioned [`docs/reference/api/openapi.json`](../reference/api/openapi.json) is generated from
+the code and a unit test fails when it is out of date:
 
 ```bash
-uv run python -m monitoring_mqtt.api.docs > docs/openapi.json
+uv run python -m monitoring_mqtt.api.docs > docs/reference/api/openapi.json
 ```
 
 ## Routes

@@ -17,7 +17,7 @@ def test_everyone_recovers_from_a_broker_restart(stack: Stack, observer: Observe
     observer.wait_until(lambda: observer.connects > connects, "observer reconnected")
     after = time.time()
     # Every device publishes again; only what fell in the outage was lost (the device knew
-    # it was disconnected and dropped it, see docs/failures.md).
+    # it was disconnected and dropped it, see docs/evaluation/failures.md).
     for device in devices:
         observer.wait_until(lambda d=device: len(observer.samples(d, since=after)) >= 2,
                             f"{device} publishes again")  # fmt: skip

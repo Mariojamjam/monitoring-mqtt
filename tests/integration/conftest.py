@@ -11,6 +11,7 @@ localhost is not the host's, the container joins the test network and uses ``bro
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -22,9 +23,17 @@ from harness import EXPERIMENT, NETWORK, PROJECT, Observer, Stack, free_port, in
 from monitoring_mqtt.cli.compose import PROJECT_OVERRIDE_VARIABLE
 
 
+def _file_number(item: pytest.Item) -> int:
+    match = re.match(r"test_(\d+)_", item.path.name)
+    return int(match.group(1)) if match else 10**6
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         item.add_marker(pytest.mark.integration)
+    # Files run in their numeric order (test_2 before test_10): the last ones reconfigure
+    # the stack. sort() is stable, so tests keep their order inside a file.
+    items.sort(key=_file_number)
 
 
 def _docker_available() -> bool:
@@ -53,7 +62,7 @@ def stack() -> Iterator[Stack]:
         "API_HOST_PORT": str(free_port()),
         "DASHBOARD_BIND_ADDRESS": "127.0.0.1",
         "DASHBOARD_HOST_PORT": str(free_port()),
-        "DASHBOARD_API_URL": "",
+        "REMOTE_API_URL": "",
     }
     # In-process Compose calls (from the cli package) must also target the isolated stack.
     os.environ[PROJECT_OVERRIDE_VARIABLE] = PROJECT

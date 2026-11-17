@@ -107,7 +107,8 @@ without the CLI.
 | Database | `postgres` | PostgreSQL + SQLAlchemy/Alembic | Durable history, owned by the API | implemented |
 | API | `api` | `api` (FastAPI) | Single entry point to the database: receives events to store and answers queries | implemented |
 | Dashboard | `dashboard` | `dashboard` (Streamlit) | Historical charts, alerts and run comparison, read from the API | implemented |
-| CLI | host or Dev Container | `cli` | Applies the experiment and machine settings to Compose | implemented |
+| Experiment probe | `experiment-probe` (one-off) | `experiments.probe` | Measures one experiment run through the broker (worker and monitor status, `$SYS`) and the API | implemented |
+| CLI | host or Dev Container | `cli` | Applies the experiment and machine settings to Compose; runs experiment scenarios | implemented |
 | Relay | `broker-relay` (optional) | `tools.relay` | Lets containers reach a broker tunnel on the host's loopback | implemented |
 
 Shared contract: every component that speaks MQTT builds and validates topics and payloads
@@ -160,7 +161,7 @@ independently.
 - The dashboard **pulls** data from the API over HTTP. Charts refresh on a timer
   (`st.fragment(run_every=…)`), and responses are cached for a few seconds
   (`st.cache_data(ttl=…)`) so that many viewers do not overload the API
-  ([dashboard.md](dashboard.md)).
+  ([dashboard.md](../guides/dashboard.md)).
 - What it draws besides the data (normal bands, alert thresholds) also comes from the
   API (`GET /api/catalog`), so it reads no configuration file.
 - It never subscribes to MQTT and never opens the database. If the dashboard is down,
@@ -287,7 +288,7 @@ flowchart TB
   they fail; scales them with `deploy.replicas`. One-off tools (`tui`, `smoke`,
   `workers`) run under the `tools` profile.
 - **Several machines.** `STACK_ROLES` splits the stack, for example the broker on a
-  Raspberry Pi and devices on other computers ([distributed.md](distributed.md)). The
+  Raspberry Pi and devices on other computers ([distributed.md](../guides/distributed.md)). The
   storage (PostgreSQL, API, ingestion), the alert engine and the dashboard are the roles
   `storage`, `alerts` and `dashboard`.
 

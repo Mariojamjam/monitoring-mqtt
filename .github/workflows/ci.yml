@@ -39,6 +39,39 @@ jobs:
       - name: Unit tests
         run: uv run --frozen pytest tests/unit
 
+      # The images also run on Raspberry Pis (64-bit ARM): every locked dependency of both
+      # images must exist as a prebuilt arm64 package. Fast; the next job builds them.
+      - name: Dependencies available for arm64
+        run: |
+          for group in "" "--group dashboard"; do
+            uv export --frozen --no-default-groups $group --no-emit-project --no-hashes > req.txt
+            uv pip install --dry-run --python-platform aarch64-unknown-linux-gnu \
+              --python-version 3.12 --only-binary :all: --target /tmp/arm64 -r req.txt
+          done
+
+  arm64-images:
+    name: Images build for arm64 (Raspberry Pi)
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the app, dashboard and broker images for linux/arm64
+        run: |
+          docker buildx build --platform linux/arm64 --target app \
+            --cache-from type=gha,scope=app-arm64 --cache-to type=gha,mode=max,scope=app-arm64 .
+          docker buildx build --platform linux/arm64 --target dashboard \
+            --cache-from type=gha,scope=dashboard-arm64 \
+            --cache-to type=gha,mode=max,scope=dashboard-arm64 .
+          docker buildx build --platform linux/arm64 infra/mosquitto
+
   integration:
     name: Integration tests (Docker)
     needs: quality

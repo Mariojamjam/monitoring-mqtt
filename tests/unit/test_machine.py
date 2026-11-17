@@ -50,7 +50,7 @@ def test_defaults_are_the_single_machine_stack() -> None:
         "API_HOST_PORT": "8000",
         "DASHBOARD_BIND_ADDRESS": "127.0.0.1",
         "DASHBOARD_HOST_PORT": "8501",
-        "DASHBOARD_API_URL": "http://api:8000",
+        "REMOTE_API_URL": "http://api:8000",
     }
     assert machine.api_url == "http://127.0.0.1:8000"
     assert machine.dashboard_url == "http://127.0.0.1:8501"
@@ -58,16 +58,16 @@ def test_defaults_are_the_single_machine_stack() -> None:
 
 def test_dashboard_on_its_own_machine_reads_a_remote_api() -> None:
     remote = {"STACK_ROLES": "dashboard", "MQTT_BROKER_HOST": "pi.local"}
-    with pytest.raises(MachineError, match="DASHBOARD_API_URL"):
+    with pytest.raises(MachineError, match="REMOTE_API_URL"):
         machine_from_env(remote)
-    machine = machine_from_env({**remote, "DASHBOARD_API_URL": "http://10.0.0.5:8000/",
+    machine = machine_from_env({**remote, "REMOTE_API_URL": "http://10.0.0.5:8000/",
                                 "DASHBOARD_BIND_ADDRESS": "0.0.0.0"})  # fmt: skip
     env = machine.compose_env()
-    assert env["DASHBOARD_API_URL"] == "http://10.0.0.5:8000"
+    assert env["REMOTE_API_URL"] == "http://10.0.0.5:8000"
     assert env["DASHBOARD_BIND_ADDRESS"] == "0.0.0.0"
     assert machine.dashboard_url == "http://127.0.0.1:8501"
     with pytest.raises(MachineError, match="not an http"):
-        machine_from_env({**remote, "DASHBOARD_API_URL": "api:8000"})
+        machine_from_env({**remote, "REMOTE_API_URL": "api:8000"})
 
 
 def test_broker_only_machine_exposed_to_the_network() -> None:
@@ -145,3 +145,26 @@ def test_node_name_override() -> None:
     )
     with pytest.raises(MachineError, match="NODE_NAME"):
         machine_from_env({"NODE_NAME": "x" * 65})
+
+
+def test_experiment_contexts_and_the_api_seen_from_containers() -> None:
+    machine = machine_from_env({"EXPERIMENT_DOCKER_CONTEXTS": "pi, lab-2"})
+    assert machine.experiment_contexts == ("pi", "lab-2")
+    assert machine.containers_api_url == "http://api:8000"
+    remote = machine_from_env({"REMOTE_API_URL": "http://10.0.0.5:8000"})
+    assert remote.containers_api_url == "http://10.0.0.5:8000"
+    with pytest.raises(MachineError, match="EXPERIMENT_DOCKER_CONTEXTS"):
+        machine_from_env({"EXPERIMENT_DOCKER_CONTEXTS": "bad name"})
+
+
+@pytest.mark.parametrize("profile", ["gateway", "field"])
+def test_machine_profiles_are_valid(profile: str) -> None:
+    repo = Path(__file__).resolve().parents[2]
+    text = (repo / "config" / "machines" / f"{profile}.env.example").read_text()
+    machine = machine_from_env(parse_env_file(text))
+    if profile == "gateway":
+        assert machine.runs("broker") and machine.runs("storage") and not machine.runs("devices")
+        assert machine.bind_address == "0.0.0.0"
+    else:
+        assert machine.runs("devices") and machine.remote_broker
+        assert machine.containers_api_url.startswith("http://192.168.0.50")

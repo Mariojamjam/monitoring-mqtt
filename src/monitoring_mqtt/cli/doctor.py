@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import email.utils
 import os
 import platform
 import shutil
 import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -288,6 +290,88 @@ def check_dashboard(
     return [CheckResult("Dashboard", Status.FAIL, f"{url} answered HTTP {status}")]
 
 
+CLOCK_TOLERANCE_SECONDS = 1.5  # the HTTP Date header has a resolution of 1 s
+
+
+def fetch_date(url: str, timeout: float = 3.0) -> float:
+    """The server's clock (HTTP ``Date``) minus this machine's, in seconds; the request's
+    own duration is split evenly between both directions."""
+    started = time.time()
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            header = response.headers.get("Date")
+    except urllib.error.HTTPError as exc:
+        header = exc.headers.get("Date")
+    ended = time.time()
+    if not header:
+        raise OSError("no Date header")
+    server = email.utils.parsedate_to_datetime(header).timestamp()
+    # Date truncates to the second, and the API (uvicorn) refreshes it once a second: on
+    # average it lags the server's clock by about 1 s.
+    return server + 1.0 - (started + ended) / 2
+
+
+def check_clock(
+    explicit: Path | None,
+    run: Runner = run_command,
+    offset: Callable[[str], float] = fetch_date,
+    environment: str | None = None,
+) -> list[CheckResult]:
+    """Latencies across machines subtract two clocks: this one must be synchronized (NTP),
+    and agree with the machine running the API when that is another one."""
+    environment = environment or detect_environment()
+    results = []
+    if not environment.startswith("host"):
+        results.append(CheckResult("Clock", Status.OK, f"the host's clock ({environment})"))
+    elif shutil.which("timedatectl") is None:
+        results.append(
+            CheckResult(
+                "Clock",
+                Status.OK,
+                "synchronization not checked on this system; make sure NTP is on",
+            )
+        )
+    else:
+        try:
+            synced = run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
+            value = synced.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            value = ""
+        if value == "yes":
+            results.append(CheckResult("Clock", Status.OK, "synchronized (NTP)"))
+        elif value == "no":
+            results.append(
+                CheckResult(
+                    "Clock",
+                    Status.WARN,
+                    "not synchronized: enable NTP (timedatectl set-ntp true, or chrony)",
+                )
+            )
+        else:
+            results.append(CheckResult("Clock", Status.OK, "synchronization unknown"))
+    try:
+        machine = load_machine(resolve_project_root(explicit).path)
+    except (ProjectNotFoundError, MachineError):
+        return results
+    if machine.remote_api_url and environment.startswith("host"):
+        url = f"{machine.remote_api_url}/health"
+        try:
+            difference = offset(url)
+        except OSError as exc:
+            results.append(CheckResult("Clock vs API", Status.WARN, f"{url}: {exc}"))
+        else:
+            status = Status.OK if abs(difference) <= CLOCK_TOLERANCE_SECONDS else Status.WARN
+            results.append(
+                CheckResult(
+                    "Clock vs API",
+                    status,
+                    f"{difference:+.1f} s against {machine.remote_api_url} (±1 s resolution)"
+                    + ("" if status is Status.OK else "; latencies across machines include it"),
+                )
+            )
+    return results
+
+
 def run_checks(
     project_dir: Path | None, run: Runner = run_command, connect: Connector = tcp_connect
 ) -> list[CheckResult]:
@@ -301,4 +385,5 @@ def run_checks(
         *check_machine(project_dir, connect, run=run),
         *check_api(project_dir),
         *check_dashboard(project_dir),
+        *check_clock(project_dir, run),
     ]

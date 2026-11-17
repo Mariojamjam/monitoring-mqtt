@@ -1,0 +1,16 @@
+# A short check that the experiment tooling works on this machine (about 3 minutes):
+# two publish intervals, one repetition each, a 20 s window.
+schema_version: 1
+name: quick
+description: Tooling check, two intervals, about 3 minutes
+base: config/simulation.yaml
+warmup: 10s
+duration: 20s
+repetitions: 1
+sweep:
+  devices.publish_interval_seconds: [1, 0.5]
+set:
+  run.log_level: WARNING
+report:
+  x: devices.publish_interval_seconds
+  charts: [throughput, latency, delivery]

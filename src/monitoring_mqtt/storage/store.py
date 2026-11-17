@@ -91,5 +91,8 @@ class Store:
     def get_run(self, run_id: str):
         return self._read(lambda c: queries.get_run(c, run_id))
 
+    def run_window(self, run_id: str, since, until):
+        return self._read(lambda c: queries.run_window(c, run_id, since, until))
+
     def stats(self):
         return self._read(queries.stats)

@@ -11,19 +11,6 @@ topics they are interested in.
 | Poultry | Ammonia detector | `ammonia` | `ppm` |
 | Cattle | Rumen pH meter | `rumen_ph` | dimensionless |
 
-All values are **synthetic**. They are not veterinary or clinical reference values.
-
-> **Status:** v0.3.0. The three device types publish through Mosquitto. A versioned
-> experiment file sets how many worker containers and devices run per type. Independent
-> monitors receive only the domain they subscribe to, and a smoke test verifies the flow end
-> to end. Parts of the stack can run on different machines, a read-only terminal UI shows
-> who publishes and who consumes, and failures and recovery are documented with measured
-> results. Every measurement and alert is stored in PostgreSQL through a FastAPI API (the
-> only component that touches the database), and an alert engine publishes derived alerts
-> on the broker, evaluated against the simulation's ground truth. A Streamlit dashboard
-> shows the history: series against the normal band and the alert thresholds, alert
-> timelines and runs side by side, read from the API only.
-
 ## Getting started
 
 There are two supported ways to work with the project. Both give you the same
@@ -88,6 +75,7 @@ monitoring-mqtt dashboard                       # the history in the browser (ht
 curl -s http://127.0.0.1:8000/api/stats         # the stored history (reference: /docs)
 monitoring-mqtt stack logs alerts               # alerts raised and cleared
 monitoring-mqtt test smoke                      # end-to-end check of the running stack
+monitoring-mqtt experiment run quick            # a measured experiment (about 3 minutes)
 monitoring-mqtt stack down
 ```
 
@@ -107,13 +95,13 @@ each event from publisher to subscriber. Without installing the command, you can
 | `monitor-poultry` | Subscriber to `monitoring/v1/poultry/#` |
 | `monitor-cattle` | Subscriber to `monitoring/v1/cattle/#` |
 | `monitor-all` | Global subscriber to `monitoring/v1/#` (0 replicas by default) |
-| `alerts` | Alert engine: applies [`config/alerts.yaml`](config/alerts.yaml) and publishes alerts on `monitoring/alerts/v1/...` ([alerts.md](docs/alerts.md)) |
+| `alerts` | Alert engine: applies [`config/alerts.yaml`](config/alerts.yaml) and publishes alerts on `monitoring/alerts/v1/...` ([alerts.md](docs/design/alerts.md)) |
 | `ingestion` | Subscribes to measurements and alerts and posts them to the API in batches |
-| `api` | FastAPI, the only component that talks to the database; `http://127.0.0.1:8000`, reference at [`/docs`](docs/api.md) |
-| `dashboard` | Streamlit dashboard, `http://127.0.0.1:8501`: history, alerts and runs, read from the API ([dashboard.md](docs/dashboard.md)) |
+| `api` | FastAPI, the only component that talks to the database; `http://127.0.0.1:8000`, reference at [`/docs`](docs/design/api.md) |
+| `dashboard` | Streamlit dashboard, `http://127.0.0.1:8501`: history, alerts and runs, read from the API ([dashboard.md](docs/guides/dashboard.md)) |
 | `postgres` | PostgreSQL 18, the stored history (volume `pgdata`, not published on the host) |
 | `migrate` | Applies the schema migrations on every `stack up`, then exits |
-| `broker-relay` | Forwards to a broker tunnel on this machine's loopback; started only when needed (see [distributed.md](docs/distributed.md#tunnels)) |
+| `broker-relay` | Forwards to a broker tunnel on this machine's loopback; started only when needed (see [distributed.md](docs/guides/distributed.md#tunnels)) |
 
 Each virtual device publishes every 5 s over its own MQTT connection. Publishers and
 subscribers never know about each other. A device publishes whether or not any monitor
@@ -131,13 +119,15 @@ Configuration is split by purpose:
 | [`config/examples/`](config/examples) | Ready-made experiments: anomalies, unstable devices, single-device faults | Yes |
 | `.env` (copied from [`.env.example`](.env.example)) | Settings of your machine only: which parts of the stack run here, the broker address, the host port and the smoke test timeout | No |
 
-`config/simulation.yaml` describes one experiment. The defaults shown below run one
-container per device and one monitor per domain:
+`config/simulation.yaml` describes one experiment, and every section is documented in
+the file itself. The repository's experiment runs one container per device and one
+monitor per domain, and one minute in, makes each domain's device stop, pause or delay
+for 30 s (see `behavior` below):
 
 ```yaml
 run:
   run_id: null              # null: a new id per `stack up`, shared by every worker
-  seed: 42
+  seed: 128256
   log_level: INFO
 mqtt:
   qos: 1
@@ -155,6 +145,11 @@ monitors:                   # subscribers, per kind
   poultry:     {replicas: 1}
   cattle:      {replicas: 1}
   all:         {replicas: 0}
+behavior:                   # optional; omit it for normal operation
+  faults:
+    - {device: "poultry-*-001", at: 1m, lasts: 30s, action: stop}
+    - {device: "aquaculture-*-001", at: 1m, lasts: 30s, action: pause}
+    - {device: "cattle-*-001", at: 1m, lasts: 30s, action: delay}
 ```
 
 - **Workers.** `replicas` is the number of containers (**N**), and `devices_per_worker` is
@@ -171,7 +166,7 @@ monitors:                   # subscribers, per kind
   `dashboard: {refresh: 5s}`.
 - **Behaviour.** An optional `behavior` section adds anomalies, instability (pauses,
   delays, disconnections) and scheduled faults on single devices, for example
-  `anomalies: {every: 2m, lasts: 30s}`. See [docs/simulation.md](docs/simulation.md).
+  `anomalies: {every: 2m, lasts: 30s}`. See [simulation.md](docs/design/simulation.md).
 
 To run a different experiment, edit the file and run `monitoring-mqtt stack up` again. No
 image rebuild is needed. Every `stack up` starts a **new run**: it prints the experiment
@@ -184,23 +179,18 @@ applies the file.
 
 `monitoring-mqtt` is the single operational entry point of the project.
 
-| Command | Description |
+| Command | What it does |
 |---|---|
-| `monitoring-mqtt --help` | Show available commands |
-| `monitoring-mqtt version` | Show the installed version |
-| `monitoring-mqtt doctor` | Check the environment (host or Dev Container), Python, uv, Docker (including the daemon ID), Compose, the project directory, this machine's roles, the broker connection, the API and the dashboard |
-| `monitoring-mqtt stack up [--build] [--config FILE] [--run-id ID]` | Apply `config/simulation.yaml` (or `FILE`), start this machine's part of the stack in the background, wait until it is healthy, then print and verify the device topology |
-| `monitoring-mqtt stack workers` | List the device workers registered in the broker, from every machine |
-| `monitoring-mqtt tui [--config FILE]` | Open the read-only terminal UI: who publishes, the broker and who consumes, live |
-| `monitoring-mqtt dashboard [--no-open]` | Open the dashboard (stored history, alerts, runs) in the browser, after checking that it answers |
-| `monitoring-mqtt stack restart [SERVICE...] [-t SECONDS]` | Restart running containers as they are (same run id), e.g. `stack restart broker` |
-| `monitoring-mqtt device stop\|pause\|delay\|disconnect\|anomaly\|resume DEVICE_ID [--for 30s]` | Live command to one device; its neighbours keep publishing |
-| `monitoring-mqtt stack down [--volumes]` | Stop and remove the stack containers and network; the stored history is kept unless `--volumes` (asks first) |
-| `monitoring-mqtt stack status` | Show the state of every service |
-| `monitoring-mqtt stack logs [SERVICE] [--no-follow] [-n N]` | Show logs; follows by default, Ctrl+C stops following |
-| `monitoring-mqtt test unit [PYTEST ARGS]` | Run the unit tests; extra arguments go to pytest, e.g. `-k topics` |
-| `monitoring-mqtt test integration [PYTEST ARGS]` | Run the integration suite on an isolated stack (Docker, about 5 minutes); your stack is not touched |
-| `monitoring-mqtt test smoke [--config FILE]` | Check the broker this machine uses end to end from a container; exit code 0 means it passed |
+| `monitoring-mqtt doctor` | Check the environment, Docker, this machine's roles, the broker, the API, the dashboard and the clock |
+| `monitoring-mqtt stack up\|down\|status\|logs\|restart\|workers` | Run this machine's part of the stack; every `stack up` applies `config/simulation.yaml` as a new run |
+| `monitoring-mqtt tui` | Live terminal UI: who publishes, the broker and who consumes |
+| `monitoring-mqtt dashboard` | Open the stored history (series, alerts, runs) in the browser |
+| `monitoring-mqtt device stop\|pause\|delay\|disconnect\|anomaly\|resume DEVICE_ID` | Live command to one device; its neighbours keep publishing |
+| `monitoring-mqtt experiment list\|run\|report` | Run versioned experiment scenarios and turn them into tables and charts |
+| `monitoring-mqtt test unit\|integration\|smoke` | Unit tests, the integration suite on an isolated stack, an end-to-end check |
+
+Every command by task, with examples: [docs/commands.md](docs/commands.md). Every option:
+the generated [command line reference](docs/reference/cli.md), or `monitoring-mqtt <command> --help`.
 
 The global option `--project-dir PATH` selects the checkout to operate on. Without it, the
 CLI looks for the project in this order:
@@ -217,18 +207,22 @@ is up, it keeps running without the CLI.
 
 ## Documentation
 
-- [System design](docs/design.md): how every part communicates (MQTT, HTTP, SQL), with diagrams.
-- [Architecture](docs/architecture.md): components, data flow, failure behaviour and security boundaries.
-- [Simulation](docs/simulation.md): how values evolve, anomalies, instability, scheduled faults, live device commands and ground truth.
-- [Storage](docs/storage.md): ingestion, delivery guarantees hop by hop, schema, measured outages.
-- [HTTP API](docs/api.md): routes, pagination, examples; interactive Scalar reference at `/docs` and as a [stand-alone page](docs/api-reference.html) ([OpenAPI](docs/openapi.json)).
-- [Alerts](docs/alerts.md): rules, states, topics, restarts and evaluation against the ground truth.
-- [Dashboard](docs/dashboard.md): pages, live refresh and caching, why it only talks to the API.
-- [Failures and recovery](docs/failures.md): how to provoke each failure, how it is detected and what happens to the data, with measured results.
-- [MQTT contract](docs/mqtt-contract.md): topics, payload schema, identities and QoS semantics.
-- [Development guide](docs/development.md): environment setup, configuration, tests and code quality.
-- [Terminal UI](docs/tui.md): screens, keys, data sources and demonstration scenarios.
-- [Running on several machines](docs/distributed.md): broker on one machine (for example a Raspberry Pi), devices and monitors on others.
+The [documentation index](docs/README.md) describes every document. Grouped by purpose:
+
+- **Guides** (`docs/guides/`): [development](docs/guides/development.md),
+  [terminal UI](docs/guides/tui.md), [dashboard](docs/guides/dashboard.md),
+  [several machines](docs/guides/distributed.md),
+  [Raspberry Pi deployment](docs/guides/deploy-raspberry-pi.md).
+- **Design** (`docs/design/`): [system design](docs/design/design.md),
+  [architecture](docs/design/architecture.md), [MQTT contract](docs/design/mqtt-contract.md),
+  [simulation](docs/design/simulation.md), [storage](docs/design/storage.md),
+  [alerts](docs/design/alerts.md), [HTTP API](docs/design/api.md).
+- **Evaluation** (`docs/evaluation/`): [experiments](docs/evaluation/experiments.md),
+  [failures and recovery](docs/evaluation/failures.md).
+- **Reference** (`docs/reference/`, generated): [CLI](docs/reference/cli.md),
+  [API reference page](docs/reference/api/index.html) and
+  [OpenAPI document](docs/reference/api/openapi.json).
+- **[Commands](docs/commands.md)**: every command, by task.
 
 ## Limitations
 
@@ -260,4 +254,5 @@ is up, it keeps running without the CLI.
 
 Python 3.12 · uv · Typer + Rich · Textual · Eclipse Paho MQTT · Pydantic · Eclipse
 Mosquitto · FastAPI + Uvicorn · SQLAlchemy 2 + Alembic · PostgreSQL 18 (psycopg 3) · HTTPX ·
-Scalar (API reference) · Streamlit + Altair + pandas · Docker Compose V2.
+Scalar (API reference) · Streamlit + Altair + pandas · matplotlib (experiment reports) ·
+Docker Compose V2.

@@ -1,0 +1,19 @@
+# QoS 0 (at most once) versus QoS 1 (at least once) under the same load: confirmations,
+# duplicates, delivery and their cost. Applies to every client of this machine.
+schema_version: 1
+name: qos
+description: QoS 0 versus QoS 1, 50 devices at 2 messages per second each
+warmup: 30s
+duration: 2m
+repetitions: 3
+set:
+  run.log_level: WARNING
+  devices.publish_interval_seconds: 0.5
+  workers.dissolved_oxygen_probe.replicas: 0
+  workers.rumen_ph_bolus.replicas: 0
+  workers.ammonia_detector: {replicas: 5, devices_per_worker: 10}
+  monitors: {aquaculture: {replicas: 0}, poultry: {replicas: 1}, cattle: {replicas: 0}}
+sweep:
+  mqtt.qos: [0, 1]
+report:
+  charts: [acked, delivery, duplicates, latency, broker, cpu]

@@ -24,7 +24,7 @@ comes from the broker:
 | Alerts | `monitoring/alerts/v1/#` | Open alerts (retained active state) and every alert raised or cleared |
 
 MQTT cannot list subscribers, so the UI learns about consumers from the status that each
-monitor publishes (see [mqtt-contract.md](mqtt-contract.md#observability-plane)): the topic
+monitor publishes (see [mqtt-contract.md](../design/mqtt-contract.md#observability-plane)): the topic
 filter it subscribes to and the latest messages it **reported as received**. What a
 consumer shows is therefore what it actually got, not what the UI expects it to get.
 
@@ -88,7 +88,7 @@ terminal, and their effect appears in the Mode column.
 ## Scenarios
 
 Each scenario uses the CLI (in a second terminal) while the UI shows the effect. Measured
-detection times and data loss for the failure scenarios are in [failures.md](failures.md).
+detection times and data loss for the failure scenarios are in [failures.md](../evaluation/failures.md).
 
 | Scenario | How | What the UI shows |
 |---|---|---|
