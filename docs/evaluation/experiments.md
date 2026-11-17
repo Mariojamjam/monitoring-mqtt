@@ -35,7 +35,7 @@ stack up (run id qos-<campaign>-p1-r1)
 2. The **probe** (`experiment-probe`, a one-off container like the TUI) connects to the
    broker as an observer. It waits until every device of the run reports, then the
    warm-up, then opens the **window**. It records the status of every worker and monitor
-   ([mqtt-contract.md](mqtt-contract.md)) and samples the broker's own statistics (`$SYS`,
+   ([mqtt-contract.md](../design/mqtt-contract.md)) and samples the broker's own statistics (`$SYS`,
    refreshed every 2 s).
 3. During the window the CLI samples CPU and memory of every container (`docker stats`)
    and runs the scenario's failure actions at their times.
@@ -96,7 +96,7 @@ Every run gives one row of `runs.csv`. The main columns:
 | `broker-failure` | What happens when the broker restarts? | clean or persistent sessions; broker restarted 60 s into the window | 6 |
 | `worker-failure` | What does a crashed container take with it? | one of two workers killed for 10 s | 3 |
 | `subscriber-failure` | Do publishers notice a dead subscriber? Does it lose messages? | clean or persistent sessions; a monitor stopped for 20 s | 6 |
-| `device-failure` | Stop versus disconnection of one device | `stop` or `disconnect` for 30 s (simulation faults, [simulation.md](simulation.md)) | 6 |
+| `device-failure` | Stop versus disconnection of one device | `stop` or `disconnect` for 30 s (simulation faults, [simulation.md](../design/simulation.md)) | 6 |
 
 A point is **saturated** when the worst repetition stores less than 99% of what was
 generated, its p95 delay to the database exceeds 5 s, or a container fails. With

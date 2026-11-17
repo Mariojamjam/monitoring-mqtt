@@ -15,6 +15,7 @@ from monitoring_mqtt.storage.writes import WriteResult
 
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 REPO = Path(__file__).resolve().parents[2]
+API_REFERENCE = REPO / "docs" / "reference" / "api"
 
 
 class FakeStore:
@@ -214,19 +215,19 @@ def test_reference_page_and_openapi(client: TestClient) -> None:
 
 
 def test_committed_openapi_document_is_up_to_date(client: TestClient) -> None:
-    committed = json.loads((REPO / "docs" / "openapi.json").read_text(encoding="utf-8"))
+    committed = json.loads((API_REFERENCE / "openapi.json").read_text(encoding="utf-8"))
     assert committed == client.get("/openapi.json").json(), (
-        "docs/openapi.json is out of date: run "
-        "`uv run python -m monitoring_mqtt.api.docs > docs/openapi.json`"
+        "docs/reference/api/openapi.json is out of date: run "
+        "`uv run python -m monitoring_mqtt.api.docs > docs/reference/api/openapi.json`"
     )
 
 
 def test_committed_reference_page_is_up_to_date(client: TestClient) -> None:
-    committed = (REPO / "docs" / "api-reference.html").read_text(encoding="utf-8")
+    committed = (API_REFERENCE / "index.html").read_text(encoding="utf-8")
     expected = standalone_page("Monitoring MQTT API reference", client.get("/openapi.json").json())
     assert committed == expected, (
-        "docs/api-reference.html is out of date: run "
-        "`uv run python -m monitoring_mqtt.api.docs --html > docs/api-reference.html`"
+        "docs/reference/api/index.html is out of date: run "
+        "`uv run python -m monitoring_mqtt.api.docs --html > docs/reference/api/index.html`"
     )
 
 

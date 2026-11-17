@@ -110,13 +110,13 @@ each event from publisher to subscriber. Without installing the command, you can
 | `monitor-poultry` | Subscriber to `monitoring/v1/poultry/#` |
 | `monitor-cattle` | Subscriber to `monitoring/v1/cattle/#` |
 | `monitor-all` | Global subscriber to `monitoring/v1/#` (0 replicas by default) |
-| `alerts` | Alert engine: applies [`config/alerts.yaml`](config/alerts.yaml) and publishes alerts on `monitoring/alerts/v1/...` ([alerts.md](docs/alerts.md)) |
+| `alerts` | Alert engine: applies [`config/alerts.yaml`](config/alerts.yaml) and publishes alerts on `monitoring/alerts/v1/...` ([alerts.md](docs/design/alerts.md)) |
 | `ingestion` | Subscribes to measurements and alerts and posts them to the API in batches |
-| `api` | FastAPI, the only component that talks to the database; `http://127.0.0.1:8000`, reference at [`/docs`](docs/api.md) |
-| `dashboard` | Streamlit dashboard, `http://127.0.0.1:8501`: history, alerts and runs, read from the API ([dashboard.md](docs/dashboard.md)) |
+| `api` | FastAPI, the only component that talks to the database; `http://127.0.0.1:8000`, reference at [`/docs`](docs/design/api.md) |
+| `dashboard` | Streamlit dashboard, `http://127.0.0.1:8501`: history, alerts and runs, read from the API ([dashboard.md](docs/guides/dashboard.md)) |
 | `postgres` | PostgreSQL 18, the stored history (volume `pgdata`, not published on the host) |
 | `migrate` | Applies the schema migrations on every `stack up`, then exits |
-| `broker-relay` | Forwards to a broker tunnel on this machine's loopback; started only when needed (see [distributed.md](docs/distributed.md#tunnels)) |
+| `broker-relay` | Forwards to a broker tunnel on this machine's loopback; started only when needed (see [distributed.md](docs/guides/distributed.md#tunnels)) |
 
 Each virtual device publishes every 5 s over its own MQTT connection. Publishers and
 subscribers never know about each other. A device publishes whether or not any monitor
@@ -174,7 +174,7 @@ monitors:                   # subscribers, per kind
   `dashboard: {refresh: 5s}`.
 - **Behaviour.** An optional `behavior` section adds anomalies, instability (pauses,
   delays, disconnections) and scheduled faults on single devices, for example
-  `anomalies: {every: 2m, lasts: 30s}`. See [docs/simulation.md](docs/simulation.md).
+  `anomalies: {every: 2m, lasts: 30s}`. See [simulation.md](docs/design/simulation.md).
 
 To run a different experiment, edit the file and run `monitoring-mqtt stack up` again. No
 image rebuild is needed. Every `stack up` starts a **new run**: it prints the experiment
@@ -223,20 +223,20 @@ is up, it keeps running without the CLI.
 
 ## Documentation
 
-- [System design](docs/design.md): how every part communicates (MQTT, HTTP, SQL), with diagrams.
-- [Architecture](docs/architecture.md): components, data flow, failure behaviour and security boundaries.
-- [Simulation](docs/simulation.md): how values evolve, anomalies, instability, scheduled faults, live device commands and ground truth.
-- [Storage](docs/storage.md): ingestion, delivery guarantees hop by hop, schema, measured outages.
-- [HTTP API](docs/api.md): routes, pagination, examples; interactive Scalar reference at `/docs` and as a [stand-alone page](docs/api-reference.html) ([OpenAPI](docs/openapi.json)).
-- [Alerts](docs/alerts.md): rules, states, topics, restarts and evaluation against the ground truth.
-- [Dashboard](docs/dashboard.md): pages, live refresh and caching, why it only talks to the API.
-- [Experiments](docs/experiments.md): scenarios, how a run is measured, metric definitions, reports, experiments across machines.
-- [Failures and recovery](docs/failures.md): how to provoke each failure, how it is detected and what happens to the data, with measured results.
-- [MQTT contract](docs/mqtt-contract.md): topics, payload schema, identities and QoS semantics.
-- [Development guide](docs/development.md): environment setup, configuration, tests and code quality.
-- [Terminal UI](docs/tui.md): screens, keys, data sources and demonstration scenarios.
-- [Running on several machines](docs/distributed.md): broker on one machine (for example a Raspberry Pi), devices and monitors on others.
-- [Deploying on a Raspberry Pi](docs/deploy-raspberry-pi.md): step by step, with `.env` profiles for the gateway and the field machines.
+- [System design](docs/design/design.md): how every part communicates (MQTT, HTTP, SQL), with diagrams.
+- [Architecture](docs/design/architecture.md): components, data flow, failure behaviour and security boundaries.
+- [Simulation](docs/design/simulation.md): how values evolve, anomalies, instability, scheduled faults, live device commands and ground truth.
+- [Storage](docs/design/storage.md): ingestion, delivery guarantees hop by hop, schema, measured outages.
+- [HTTP API](docs/design/api.md): routes, pagination, examples; interactive Scalar reference at `/docs` and as a [stand-alone page](docs/reference/api/index.html) ([OpenAPI](docs/reference/api/openapi.json)).
+- [Alerts](docs/design/alerts.md): rules, states, topics, restarts and evaluation against the ground truth.
+- [Dashboard](docs/guides/dashboard.md): pages, live refresh and caching, why it only talks to the API.
+- [Experiments](docs/evaluation/experiments.md): scenarios, how a run is measured, metric definitions, reports, experiments across machines.
+- [Failures and recovery](docs/evaluation/failures.md): how to provoke each failure, how it is detected and what happens to the data, with measured results.
+- [MQTT contract](docs/design/mqtt-contract.md): topics, payload schema, identities and QoS semantics.
+- [Development guide](docs/guides/development.md): environment setup, configuration, tests and code quality.
+- [Terminal UI](docs/guides/tui.md): screens, keys, data sources and demonstration scenarios.
+- [Running on several machines](docs/guides/distributed.md): broker on one machine (for example a Raspberry Pi), devices and monitors on others.
+- [Deploying on a Raspberry Pi](docs/guides/deploy-raspberry-pi.md): step by step, with `.env` profiles for the gateway and the field machines.
 
 ## Limitations
 

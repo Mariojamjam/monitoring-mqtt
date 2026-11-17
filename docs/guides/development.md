@@ -101,14 +101,14 @@ monitoring-mqtt stack down              # keeps the stored history; --volumes de
 
 With the `storage` role, `stack up` also runs PostgreSQL, the schema migrations, the API
 (`http://127.0.0.1:8000`, reference at `/docs`) and the ingestion consumer; see
-[storage.md](storage.md). To change the schema, edit `storage/schema.py` and add an Alembic
+[storage.md](../design/storage.md). To change the schema, edit `storage/schema.py` and add an Alembic
 migration (`storage/migrations/versions/`); an integration test fails if they differ.
 After changing a route or a response model, regenerate the API documents (a unit test
 checks them):
 
 ```bash
-uv run python -m monitoring_mqtt.api.docs > docs/openapi.json
-uv run python -m monitoring_mqtt.api.docs --html > docs/api-reference.html
+uv run python -m monitoring_mqtt.api.docs > docs/reference/api/openapi.json
+uv run python -m monitoring_mqtt.api.docs --html > docs/reference/api/index.html
 ```
 
 `stack up` reads `config/simulation.yaml` (or the file given with `--config`), validates it
@@ -214,7 +214,7 @@ keys and checking tables and screens.
 
 `test smoke` requires a running broker: the local stack, or `MQTT_BROKER_HOST` when this
 machine has no broker role. It is described in
-[architecture.md](architecture.md#smoke-test). Typical failures and their causes:
+[architecture.md](../design/architecture.md#smoke-test). Typical failures and their causes:
 
 | Failing check | Likely cause |
 |---|---|

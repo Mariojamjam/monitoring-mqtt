@@ -336,7 +336,7 @@ Counters since the worker started, per device:
 
 `generated` minus `published` minus `failed` were withheld by the simulation (delays not
 yet released, simulated disconnections). Experiments compare these counters with what the
-monitors received and what was stored ([experiments.md](experiments.md)).
+monitors received and what was stored ([experiments.md](../evaluation/experiments.md)).
 
 ## Simulation plane
 

@@ -17,7 +17,7 @@ and the commands stay the same; only where each service runs changes.
 ## Machine settings
 
 Each machine describes its part in its own `.env` (git-ignored, copied from
-[`.env.example`](../.env.example)). Shell variables take precedence over the file.
+[`.env.example`](../../.env.example)). Shell variables take precedence over the file.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -29,7 +29,7 @@ Each machine describes its part in its own `.env` (git-ignored, copied from
 | `API_BIND_ADDRESS` / `API_HOST_PORT` | `127.0.0.1` / `8000` | Where the API is published (`storage` role) |
 | `DASHBOARD_BIND_ADDRESS` / `DASHBOARD_HOST_PORT` | `127.0.0.1` / `8501` | Where the dashboard is published (`dashboard` role) |
 | `REMOTE_API_URL` | this stack's API | The API on another machine, read by the dashboard and by experiments; required when this machine runs `dashboard` without `storage` |
-| `EXPERIMENT_DOCKER_CONTEXTS` | empty | Docker contexts of the other machines of an experiment, which experiments sample and act on ([experiments.md](experiments.md)) |
+| `EXPERIMENT_DOCKER_CONTEXTS` | empty | Docker contexts of the other machines of an experiment, which experiments sample and act on ([experiments.md](../evaluation/experiments.md)) |
 | `NODE_NAME` | hostname where the CLI runs | Label of this machine in worker claims and monitor status. Set it in a Dev Container, whose hostname is not the machine's |
 
 The CLI checks the combination before calling Docker. A machine either runs the broker
@@ -111,7 +111,7 @@ measurements generated meanwhile are dropped and leave a visible `sequence` gap.
   container id. The CLI can only compare containers on its own machine, so every worker
   also claims its id in the broker before creating devices. A worker whose id is already
   claimed by another machine switches to a random id. `stack workers` marks those ids as
-  `own id`. The protocol is described in [mqtt-contract.md](mqtt-contract.md#worker-registry).
+  `own id`. The protocol is described in [mqtt-contract.md](../design/mqtt-contract.md#worker-registry).
 
 ## Checks
 

@@ -1,6 +1,6 @@
 """Metrics of one run, from what the probe and the resource sampler collected (pure).
 
-Definitions (docs/experiments.md):
+Definitions (docs/evaluation/experiments.md):
 
 - **published / acked / failed**: what the devices handed to MQTT, what was confirmed
   (PUBACK with QoS 1; written to the socket with QoS 0) and what could not be sent, during

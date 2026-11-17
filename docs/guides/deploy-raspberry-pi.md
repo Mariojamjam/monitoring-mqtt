@@ -4,7 +4,7 @@ A step-by-step guide to the distributed setup: the **gateway**, for example a Ra
 Pi, runs the broker, the history (PostgreSQL, API, ingestion consumer), the alert engine
 and the dashboard; **field** machines run the devices and the monitors. Roles and machine
 settings are described in [distributed.md](distributed.md). Ready-made `.env` files for
-both machines are in [`config/machines/`](../config/machines).
+both machines are in [`config/machines/`](../../config/machines).
 
 ```text
  field machine (devices, monitors)              gateway (Raspberry Pi)
@@ -101,7 +101,7 @@ monitoring-mqtt experiment run quick
 ```
 
 The `broker-failure` scenario then restarts the gateway's broker, and the resource
-columns include the gateway's containers ([experiments.md](experiments.md#across-machines)).
+columns include the gateway's containers ([experiments.md](../evaluation/experiments.md#across-machines)).
 
 ## 4. Checks and troubleshooting
 

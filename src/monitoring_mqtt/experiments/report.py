@@ -239,7 +239,7 @@ def markdown(scenario: Scenario, manifest: dict[str, Any], records: list[dict[st
         f"warmed up for {scenario.warmup:g} s and measured a window of {scenario.duration:g} s. "
         "Counts and rates cover the window only. Values are means over the repetitions; "
         "± is the 95% confidence interval (Student's t). Metric definitions: "
-        "docs/experiments.md.",
+        "docs/evaluation/experiments.md.",
         "",
         "| | |",
         "|---|---|",
