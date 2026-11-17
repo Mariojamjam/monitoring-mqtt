@@ -187,26 +187,18 @@ applies the file.
 
 `monitoring-mqtt` is the single operational entry point of the project.
 
-| Command | Description |
+| Command | What it does |
 |---|---|
-| `monitoring-mqtt --help` | Show available commands |
-| `monitoring-mqtt version` | Show the installed version |
-| `monitoring-mqtt doctor` | Check the environment (host or Dev Container), Python, uv, Docker (including the daemon ID), Compose, the project directory, this machine's roles, the broker connection, the API, the dashboard and the clock |
-| `monitoring-mqtt stack up [--build] [--config FILE] [--run-id ID]` | Apply `config/simulation.yaml` (or `FILE`), start this machine's part of the stack in the background, wait until it is healthy, then print and verify the device topology |
-| `monitoring-mqtt stack workers` | List the device workers registered in the broker, from every machine |
-| `monitoring-mqtt tui [--config FILE]` | Open the read-only terminal UI: who publishes, the broker and who consumes, live |
-| `monitoring-mqtt dashboard [--no-open]` | Open the dashboard (stored history, alerts, runs) in the browser, after checking that it answers |
-| `monitoring-mqtt stack restart [SERVICE...] [-t SECONDS]` | Restart running containers as they are (same run id), e.g. `stack restart broker` |
-| `monitoring-mqtt device stop\|pause\|delay\|disconnect\|anomaly\|resume DEVICE_ID [--for 30s]` | Live command to one device; its neighbours keep publishing |
-| `monitoring-mqtt stack down [--volumes]` | Stop and remove the stack containers and network; the stored history is kept unless `--volumes` (asks first) |
-| `monitoring-mqtt stack status` | Show the state of every service |
-| `monitoring-mqtt stack logs [SERVICE] [--no-follow] [-n N]` | Show logs; follows by default, Ctrl+C stops following |
-| `monitoring-mqtt experiment list` | List the experiment scenarios in `experiments/` |
-| `monitoring-mqtt experiment run SCENARIO [-r N] [--duration D] [--warmup D] [--resume DIR] [--dry-run]` | Run a scenario: one stack per sweep point and repetition, measured by the probe; results in `results/<scenario>/<campaign>/` |
-| `monitoring-mqtt experiment report DIR` | Aggregate a campaign: `summary.csv`, charts and `report.md` |
-| `monitoring-mqtt test unit [PYTEST ARGS]` | Run the unit tests; extra arguments go to pytest, e.g. `-k topics` |
-| `monitoring-mqtt test integration [PYTEST ARGS]` | Run the integration suite on an isolated stack (Docker, about 5 minutes); your stack is not touched |
-| `monitoring-mqtt test smoke [--config FILE]` | Check the broker this machine uses end to end from a container; exit code 0 means it passed |
+| `monitoring-mqtt doctor` | Check the environment, Docker, this machine's roles, the broker, the API, the dashboard and the clock |
+| `monitoring-mqtt stack up\|down\|status\|logs\|restart\|workers` | Run this machine's part of the stack; every `stack up` applies `config/simulation.yaml` as a new run |
+| `monitoring-mqtt tui` | Live terminal UI: who publishes, the broker and who consumes |
+| `monitoring-mqtt dashboard` | Open the stored history (series, alerts, runs) in the browser |
+| `monitoring-mqtt device stop\|pause\|delay\|disconnect\|anomaly\|resume DEVICE_ID` | Live command to one device; its neighbours keep publishing |
+| `monitoring-mqtt experiment list\|run\|report` | Run versioned experiment scenarios and turn them into tables and charts |
+| `monitoring-mqtt test unit\|integration\|smoke` | Unit tests, the integration suite on an isolated stack, an end-to-end check |
+
+Every command by task, with examples: [docs/commands.md](docs/commands.md). Every option:
+the generated [command line reference](docs/reference/cli.md), or `monitoring-mqtt <command> --help`.
 
 The global option `--project-dir PATH` selects the checkout to operate on. Without it, the
 CLI looks for the project in this order:
@@ -223,20 +215,22 @@ is up, it keeps running without the CLI.
 
 ## Documentation
 
-- [System design](docs/design/design.md): how every part communicates (MQTT, HTTP, SQL), with diagrams.
-- [Architecture](docs/design/architecture.md): components, data flow, failure behaviour and security boundaries.
-- [Simulation](docs/design/simulation.md): how values evolve, anomalies, instability, scheduled faults, live device commands and ground truth.
-- [Storage](docs/design/storage.md): ingestion, delivery guarantees hop by hop, schema, measured outages.
-- [HTTP API](docs/design/api.md): routes, pagination, examples; interactive Scalar reference at `/docs` and as a [stand-alone page](docs/reference/api/index.html) ([OpenAPI](docs/reference/api/openapi.json)).
-- [Alerts](docs/design/alerts.md): rules, states, topics, restarts and evaluation against the ground truth.
-- [Dashboard](docs/guides/dashboard.md): pages, live refresh and caching, why it only talks to the API.
-- [Experiments](docs/evaluation/experiments.md): scenarios, how a run is measured, metric definitions, reports, experiments across machines.
-- [Failures and recovery](docs/evaluation/failures.md): how to provoke each failure, how it is detected and what happens to the data, with measured results.
-- [MQTT contract](docs/design/mqtt-contract.md): topics, payload schema, identities and QoS semantics.
-- [Development guide](docs/guides/development.md): environment setup, configuration, tests and code quality.
-- [Terminal UI](docs/guides/tui.md): screens, keys, data sources and demonstration scenarios.
-- [Running on several machines](docs/guides/distributed.md): broker on one machine (for example a Raspberry Pi), devices and monitors on others.
-- [Deploying on a Raspberry Pi](docs/guides/deploy-raspberry-pi.md): step by step, with `.env` profiles for the gateway and the field machines.
+The [documentation index](docs/README.md) describes every document. Grouped by purpose:
+
+- **Guides** (`docs/guides/`): [development](docs/guides/development.md),
+  [terminal UI](docs/guides/tui.md), [dashboard](docs/guides/dashboard.md),
+  [several machines](docs/guides/distributed.md),
+  [Raspberry Pi deployment](docs/guides/deploy-raspberry-pi.md).
+- **Design** (`docs/design/`): [system design](docs/design/design.md),
+  [architecture](docs/design/architecture.md), [MQTT contract](docs/design/mqtt-contract.md),
+  [simulation](docs/design/simulation.md), [storage](docs/design/storage.md),
+  [alerts](docs/design/alerts.md), [HTTP API](docs/design/api.md).
+- **Evaluation** (`docs/evaluation/`): [experiments](docs/evaluation/experiments.md),
+  [failures and recovery](docs/evaluation/failures.md).
+- **Reference** (`docs/reference/`, generated): [CLI](docs/reference/cli.md),
+  [API reference page](docs/reference/api/index.html) and
+  [OpenAPI document](docs/reference/api/openapi.json).
+- **[Commands](docs/commands.md)**: every command, by task.
 
 ## Limitations
 
